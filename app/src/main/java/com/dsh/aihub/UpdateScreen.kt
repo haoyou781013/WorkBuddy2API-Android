@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -241,11 +242,11 @@ fun UpdateScreen(context: Context, app: AppState) {
                 SectionTitle(text = "最新版本 ${newest.version}")
                 AppCard {
                     if (newest.notes.isNotBlank()) {
-                        Text(
-                            newest.notes.trim(),
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.height(240.dp).verticalScroll(rememberScrollState())
-                        )
+                        // Release body 是 Markdown（`##` 标题、`**粗体**`、列表等）。
+                        // 原样塞进 Text 会把标记符号一起显示出来，所以走轻量渲染。
+                        Box(Modifier.height(240.dp).verticalScroll(rememberScrollState())) {
+                            ReleaseNotes(newest.notes.trim())
+                        }
                         Spacer(Modifier.height(SpaceM))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(SpaceM)) {

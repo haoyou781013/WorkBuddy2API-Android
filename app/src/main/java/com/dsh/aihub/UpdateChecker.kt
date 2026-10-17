@@ -265,16 +265,24 @@ object UpdateChecker {
         return if (ok) prefix + url else null
     }
 
-    /** 触发安装。前置检查「安装未知应用」权限，否则 Android 8+ 静默失败。 */
+    /**
+     * 触发安装。
+     *
+     * 两个前置条件缺一不可：
+     *   ① Manifest 声明了 `REQUEST_INSTALL_PACKAGES` —— 少了它，系统根本不认
+     *      这个应用有安装意图，`ACTION_MANAGE_UNKNOWN_APP_SOURCES` 也打不开对应页面
+     *   ② 用户已在系统设置里为「安装未知应用」放行
+     *
+     * 都不满足时**不能静默返回**：Android 8+ 会吞掉失败的安装 Intent，
+     * 用户看到的是"点了没反应"。所以这里必须主动跳设置页 + 抛出可读错误。
+     */
     fun install(context: Context, apk: File) {
         if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
-            runCatching {
-                context.startActivity(
-                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-            }
-            throw CheckError("请先允许本应用安装未知应用，然后重新点击安装")
+            val opened = openUnknownSourcesSetting(context)
+            throw CheckError(
+                if (opened) "已跳到系统设置。请打开「允许安装未知应用」，返回后重新点安装"
+                else "请在 系统设置 → 应用 → AIHub → 安装未知应用 中允许，然后重试"
+            )
         }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
         runCatching {
@@ -286,6 +294,27 @@ object UpdateChecker {
                 }
             )
         }.getOrElse { throw CheckError("无法启动安装器：${it.message}") }
+    }
+
+    /**
+     * 跳到「安装未知应用」授权页。
+     *
+     * 优先带 package: 直达本应用（部分 ROM 支持），
+     * 失败则退到列表页——不带参数在多数 ROM 上仍可进入应用选择列表。
+     * 返回是否成功拉起任一页面，供调用方决定错误文案。
+     */
+    private fun openUnknownSourcesSetting(context: Context): Boolean {
+        val candidates = listOf(
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES),
+            Intent(Settings.ACTION_SECURITY_SETTINGS),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+        )
+        for (intent in candidates) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (runCatching { context.startActivity(intent) }.isSuccess) return true
+        }
+        return false
     }
 
     /** 找已下载但未安装的包（重进页面时复用，不必重下）。 */

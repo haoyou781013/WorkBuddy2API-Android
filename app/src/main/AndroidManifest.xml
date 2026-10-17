@@ -21,6 +21,13 @@
          需 SYSTEM_ALERT_WINDOW 运行时授权。 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- 应用内更新必须声明此权限，否则安装器无法被拉起。
+         Android 8.0 起，未声明的应用调用安装 Intent 会**静默失败**——
+         不报错、不弹窗，什么都看不到。这个权限不在运行时申请，
+         而是引导用户到系统设置页为「安装未知应用」单独授权，
+         可通过 PackageManager.canRequestPackageInstalls() 查询状态。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
