@@ -1,6 +1,5 @@
 package com.joy4fire.workbuddy2api.ui
 
-import android.app.Activity
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,20 +22,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.joy4fire.workbuddy2api.ApiHostService
 import com.joy4fire.workbuddy2api.FormatKit
 import com.joy4fire.workbuddy2api.KeepAliveGuide
-import com.joy4fire.workbuddy2api.NativeCore
 import com.joy4fire.workbuddy2api.m3.AppRow
-import com.joy4fire.workbuddy2api.m3.LabelMain
-import com.joy4fire.workbuddy2api.m3.LabelSummary
 import com.joy4fire.workbuddy2api.m3.SectionTitle
 import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * 用量页 —— 对应原界面 usagePage()。
