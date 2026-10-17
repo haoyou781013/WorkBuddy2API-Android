@@ -83,6 +83,30 @@ object QoderVerify {
             lines += ""
             lines += "结论：这张 PAT 属于国际区，应走标准 Bearer 协议。"
             lines += "国内网关的 COSY 签名链路对它是无用的。"
+            // 注意：这里**不能提前 return**。
+            // 之前提前返回导致签到探测根本没跑到，用户看不到签到接口是否存在。
+            // 验证（吃 token）和签到（吃 campaign 接口）是两条独立链路，
+            // 一条通不代表另一条也通。
+            lines += ""
+            lines += "—— 签到接口探测 ——"
+            val claim = QoderClaim(personalToken)
+            val campaigns = runCatching { claim.listCampaigns() }
+            campaigns.onSuccess { r ->
+                if (r.ok) {
+                    lines += "✓ 活动接口可用（${r.message}）"
+                    if (r.campaigns.isEmpty()) {
+                        lines += "  当前没有活动"
+                    } else {
+                        r.campaigns.forEach { c ->
+                            lines += "  · ${c.title}  ${if (c.claimable) "可领取" else "已领取/不可领"}"
+                        }
+                    }
+                } else {
+                    lines += "✗ ${r.message}"
+                }
+            }.onFailure { e ->
+                lines += "✗ 签到探测异常：${e.message}"
+            }
             return Result(true, lines)
         }
 
