@@ -1,5 +1,15 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
@@ -123,13 +133,17 @@ fun AppShell(context: Context, app: AppState) {
                     NavigationBar {
                         AppTab.entries.forEach { item ->
                             NavigationBarItem(
-                                selected = tab == item,
-                                onClick = { tab = item },
-                                icon = {
-                                    Icon(item.icon, contentDescription = item.label)
-                                },
-                                label = { Text(item.label) }
-                            )
+                                  selected = tab == item,
+                                  onClick = { tab = item },
+                                  // 关掉 M3 默认的"胶囊只包图标"指示器。
+                                  //
+                                  // M3 规范里选中背景只圈住 icon，label 落在
+                                  // 它下方，视觉上就是"文字悬在背景块下面"。
+                                  // 这里改为自己画一个包住 icon + label 的整体底。
+                                  icon = { TabContent(item, selected = tab == item) },
+                                  label = null,
+                                  alwaysShowLabel = false,
+                              )
                         }
                     }
                 }
@@ -160,6 +174,51 @@ fun AppShell(context: Context, app: AppState) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 底部栏单个 Tab 的视觉。
+ *
+ * 为什么不用 NavigationBarItem 自带的选中指示器：
+ *   它只包图标，文字落在背景块外面，看起来像"文字悬在框下方"。
+ *   这里用一个整体 Surface 承载 icon + label，选中时一起高亮。
+ *
+ * 为什么竖排：
+ *   6 个 Tab 平分屏宽，横排会挤掉文字。竖排是底部导航的通行做法。
+ */
+@Composable
+private fun TabContent(tab: AppTab, selected: Boolean) {
+    val fg = if (selected) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Icon(
+                imageVector = tab.icon,
+                contentDescription = tab.label,
+                tint = fg,
+                modifier = Modifier.size(22.dp),
+            )
+            Text(
+                text = tab.label,
+                // labelSmall（11sp）在 6 个 Tab 并排时刚好放得下；
+                // 换 labelMedium 会让"概览""设置"等两字标签贴边。
+                style = MaterialTheme.typography.labelSmall,
+                color = fg,
+                maxLines = 1,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            )
         }
     }
 }

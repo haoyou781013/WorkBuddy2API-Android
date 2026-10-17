@@ -37,7 +37,15 @@ object M3Icons {
             viewportWidth = VP,
             viewportHeight = VP
         ).apply {
-            path(fill = SolidColor(Color.White)) {
+            // fill 必须用不明说的纯黑，不能用白色。
+            //
+            // Material3 的 Icon 通过 ColorFilter.tint 着色，而 tint 只会
+            // 作用在**没有自带颜色**的路径上。这里一旦写死 Color.White，
+            // 图标就永远是白的 —— 在浅色背景上完全看不见，
+            // 表现得像"图标丢了、只剩文字"。
+            //
+            // 用 Color.Black 作为占位：tint 会把它替换成主题色。
+            path(fill = SolidColor(Color.Black)) {
                 addPathNodes(pathData)
             }
         }.build()
