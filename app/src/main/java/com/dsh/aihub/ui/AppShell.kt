@@ -88,7 +88,7 @@ enum class AppTab(val label: String, val icon: ImageVector) {
 //   脱离 Miuix 后该依赖也随之消失。内联 7 个 ImageVector 是零成本的确定解。
 
 /** 二级页面（覆盖在 Tab 之上，带返回按钮）。 */
-enum class SubPage { NONE, USAGE, INSPECTOR, STORAGE, KEEPALIVE, PROMPT, RECORDS, SCHEDULE, UPDATE, ABOUT }
+enum class SubPage { NONE, USAGE, INSPECTOR, STORAGE, KEEPALIVE, PROMPT, RECORDS, SCHEDULE, UPDATE, ABOUT, QODER }
 
 /** 二级页标题映射，避免在 TopAppBar 里写 when 分支。 */
 private fun SubPage.title(): String = when (this) {
@@ -100,6 +100,7 @@ private fun SubPage.title(): String = when (this) {
     SubPage.RECORDS -> "调用记录"
     SubPage.SCHEDULE -> "定时参数"
     SubPage.UPDATE -> "软件更新"
+    SubPage.QODER -> "Qoder 协议验证"
     SubPage.ABOUT -> "关于"
     SubPage.NONE -> ""
 }
@@ -231,6 +232,7 @@ fun AppShell(context: Context, app: AppState) {
                             SubPage.INSPECTOR -> InspectorScreen(context, app)
                             SubPage.STORAGE -> StorageScreen(context, app)
                             SubPage.KEEPALIVE -> KeepAliveScreen(context, app)
+                            SubPage.QODER -> QoderScreen()
                             SubPage.PROMPT -> PromptScreen(context)
                             SubPage.RECORDS -> RecordsScreen(context, app)
                             SubPage.SCHEDULE -> ScheduleScreen(context, app)

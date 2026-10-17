@@ -80,6 +80,12 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                     summary = "与官方 CLI 逐字节比对的请求记录",
                     onClick = { onOpenSub(SubPage.INSPECTOR) }
                 )
+                // 实验性功能单独成行并标注，避免被误当成可用的账号来源。
+                PcRow(
+                    title = "Qoder 协议验证（实验）",
+                    summary = "检查 PAT 能否换取会话，尚未接入对话",
+                    onClick = { onOpenSub(SubPage.QODER) }
+                )
             }
         }
 

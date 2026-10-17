@@ -255,9 +255,8 @@ fun UpdateScreen(context: Context, app: AppState) {
                 SectionTitle(text = "最新版本 ${newest.version}")
                 AppCard {
                     if (newest.notes.isNotBlank()) {
-                        Text(
+                        ReleaseNotes(
                             newest.notes.trim(),
-                            style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.height(240.dp).verticalScroll(rememberScrollState())
                         )
                         Spacer(Modifier.height(SpaceM))
