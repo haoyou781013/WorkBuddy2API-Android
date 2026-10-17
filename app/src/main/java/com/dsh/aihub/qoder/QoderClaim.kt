@@ -38,6 +38,7 @@ class QoderClaim(private val personalToken: String) {
         val ok: Boolean,
         val message: String,
         val claimed: Int = 0,
+        val credits: Int = 0,
         val campaigns: List<Campaign> = emptyList(),
     )
 
@@ -86,10 +87,11 @@ class QoderClaim(private val personalToken: String) {
         }
 
         var claimed = 0
+        var credits = 0
         val errors = ArrayList<String>()
         for (c in claimable) {
             runCatching { claimOne(c.id) }
-                .onSuccess { claimed++ }
+                .onSuccess { claimed++; credits += it }
                 .onFailure { errors += "${c.title}: ${it.message}" }
         }
 
@@ -97,9 +99,11 @@ class QoderClaim(private val personalToken: String) {
             ok = errors.isEmpty(),
             message = buildString {
                 append("领取成功 $claimed/${claimable.size}")
+                if (credits > 0) append("，到账 $credits 积分")
                 if (errors.isNotEmpty()) append("；失败：${errors.joinToString("; ")}")
             },
             claimed = claimed,
+            credits = credits,
             campaigns = listed.campaigns,
         )
     }
@@ -144,8 +148,13 @@ class QoderClaim(private val personalToken: String) {
         }
     }
 
+    /** 活动列表原始响应，供诊断确认字段名。 */
+    var lastListRaw: String? = null
+        private set
+
     private fun fetchCampaigns(): List<Campaign> {
         val text = request("/sash/api/v1/me/campaigns?clientType=10", "GET")
+        lastListRaw = text
         val root = JSONObject(text)
         val arr = root.optJSONObject("data")?.optJSONArray("campaigns")
             ?: root.optJSONArray("campaigns")
@@ -164,8 +173,27 @@ class QoderClaim(private val personalToken: String) {
         return out
     }
 
-    private fun claimOne(campaignId: String): String =
-        request("/sash/api/v1/me/campaigns/$campaignId/claim", "POST")
+    /**
+     * 领取单个活动。
+     *
+     * 返回本活动到账的积分数；解析不出来返回 0。
+     * 金额字段（benefit.amount）取自社区实现 qc.sh:508，
+     * 但上游可能改字段名，所以多处尝试 + 失败不影响「已领取」的判定。
+     */
+    private fun claimOne(campaignId: String): Int {
+        val text = request("/sash/api/v1/me/campaigns/$campaignId/claim", "POST")
+        lastClaimRaw = text
+        val json = runCatching { JSONObject(text) }.getOrNull() ?: return 0
+        val data = json.optJSONObject("data")
+        return data?.optJSONObject("benefit")?.optDouble("amount", 0.0)?.toInt()
+            ?: data?.optDouble("amount", 0.0)?.toInt()
+            ?: json.optJSONObject("benefit")?.optDouble("amount", 0.0)?.toInt()
+            ?: 0
+    }
+
+    /** 最近一次领取的原始响应，供诊断显示。 */
+    var lastClaimRaw: String? = null
+        private set
 
     private fun request(path: String, method: String): String {
         val token = sessionToken ?: throw IOException("会话未建立")

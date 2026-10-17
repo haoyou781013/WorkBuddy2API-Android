@@ -157,6 +157,11 @@ object QoderVerify {
                 } else {
                     lines += "✗ ${r.message}"
                 }
+                // 附带原始 JSON：活动名字段是否正确、benefit 叫什么，
+                // 看原文比猜字段名可靠。
+                claim.lastListRaw?.let { raw ->
+                    lines += "  原始响应：${raw.take(400)}"
+                }
             }
             .onFailure { e -> lines += "✗ 签到探测异常：${e.message}" }
 
