@@ -1,5 +1,13 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
@@ -166,28 +174,76 @@ fun AppShell(context: Context, app: AppState) {
                 }
             }
         ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                if (sub != SubPage.NONE) {
-                    when (sub) {
-                        SubPage.USAGE -> UsageScreen(context, app)
-                        SubPage.INSPECTOR -> InspectorScreen(context, app)
-                        SubPage.STORAGE -> StorageScreen(context, app)
-                        SubPage.KEEPALIVE -> KeepAliveScreen(context, app)
-                        SubPage.PROMPT -> PromptScreen(context)
-                        SubPage.RECORDS -> RecordsScreen(context, app)
-                        SubPage.SCHEDULE -> ScheduleScreen(context, app)
-                        SubPage.UPDATE -> UpdateScreen(context, app)
-                        SubPage.ABOUT -> AboutScreen(context) { sub = SubPage.UPDATE }
-                        SubPage.NONE -> Unit
+            // 页面切换加过渡动画。
+            //
+            // 两个维度分开处理，因为语义不同：
+            //   · Tab 之间切换 —— 同级水平切换。用「位移 + 淡入淡出」，
+            //     方向由 Tab 索引差决定：往右切就内容往左滑，反之亦然。
+            //   · 进入二级页 —— 层级加深。统一从右侧推入，返回时反向。
+            //
+            // 位移取屏宽的 1/5（不是整屏）：整屏滑动的动画时间会把
+            // 内容拉伸成模糊条带，1/5 既有方向感又保持内容可辨。
+            //
+            // 用 AnimatedContent 而不是 Crossfade：Crossfade 只有透明度，
+            // 快速连点 Tab 时看不出方向，用户会觉得"页面闪了一下"。
+            val tabIndex = AppTab.entries.indexOf(tab)
+            val prevTabIndex = remember { mutableIntStateOf(tabIndex) }
+            val forward = tabIndex >= prevTabIndex.intValue
+            LaunchedEffect(tabIndex) { prevTabIndex.intValue = tabIndex }
+
+            AnimatedContent(
+                targetState = if (sub != SubPage.NONE) "sub:${sub.name}" else "tab:${tab.name}",
+                transitionSpec = {
+                    val isSubEnter = targetState.startsWith("sub:")
+                    val isSubExit = initialState.startsWith("sub:")
+
+                    when {
+                        // 进二级页 / 出二级页：横向推入推出
+                        isSubEnter && !isSubExit -> {
+                            (slideInHorizontally { it / 5 } + fadeIn()) togetherWith
+                                (slideOutHorizontally { -it / 5 } + fadeOut())
+                        }
+                        isSubExit && !isSubEnter -> {
+                            (slideInHorizontally { -it / 5 } + fadeIn()) togetherWith
+                                (slideOutHorizontally { it / 5 } + fadeOut())
+                        }
+                        // Tab 之间：按索引方向滑
+                        else -> {
+                            val dir = if (forward) 1 else -1
+                            (slideInHorizontally { dir * it / 5 } + fadeIn()) togetherWith
+                                (slideOutHorizontally { -dir * it / 5 } + fadeOut())
+                        }
+                    }.apply {
+                        targetContentZIndex = if (isSubEnter || forward) 1f else -1f
                     }
-                } else {
-                    when (tab) {
-                        AppTab.OVERVIEW -> OverviewScreen(context, app) { sub = it }
-                        AppTab.ACCOUNTS -> AccountsScreen(context, app)
-                        AppTab.MODELS -> ModelsScreen(context, app)
-                        AppTab.APPS -> AppsScreen(context, app)
-                        AppTab.SETTINGS -> SettingsScreen(context, app) { sub = it }
-                        AppTab.GROWTH -> GrowthScreen(context, app.selectedAccount)
+                },
+                label = "page",
+            ) { key ->
+                Box(Modifier.fillMaxSize()) {
+                    if (key.startsWith("sub:")) {
+                        val page = SubPage.valueOf(key.removePrefix("sub:"))
+                        when (page) {
+                            SubPage.USAGE -> UsageScreen(context, app)
+                            SubPage.INSPECTOR -> InspectorScreen(context, app)
+                            SubPage.STORAGE -> StorageScreen(context, app)
+                            SubPage.KEEPALIVE -> KeepAliveScreen(context, app)
+                            SubPage.PROMPT -> PromptScreen(context)
+                            SubPage.RECORDS -> RecordsScreen(context, app)
+                            SubPage.SCHEDULE -> ScheduleScreen(context, app)
+                            SubPage.UPDATE -> UpdateScreen(context, app)
+                            SubPage.ABOUT -> AboutScreen(context) { sub = SubPage.UPDATE }
+                            SubPage.NONE -> Unit
+                        }
+                    } else {
+                        val page = AppTab.valueOf(key.removePrefix("tab:"))
+                        when (page) {
+                            AppTab.OVERVIEW -> OverviewScreen(context, app) { sub = it }
+                            AppTab.ACCOUNTS -> AccountsScreen(context, app)
+                            AppTab.MODELS -> ModelsScreen(context, app)
+                            AppTab.APPS -> AppsScreen(context, app)
+                            AppTab.SETTINGS -> SettingsScreen(context, app) { sub = it }
+                            AppTab.GROWTH -> GrowthScreen(context, app.selectedAccount)
+                        }
                     }
                 }
             }

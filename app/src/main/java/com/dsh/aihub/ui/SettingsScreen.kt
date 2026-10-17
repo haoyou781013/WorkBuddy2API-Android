@@ -1,5 +1,10 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Row
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -68,13 +73,11 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                 PcRow(
                     title = "后台保活",
                     summary = "按厂商逐步放开限制，并检查漏项",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.KEEPALIVE) }
                 )
                 PcRow(
                     title = "出网取证",
                     summary = "与官方 CLI 逐字节比对的请求记录",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.INSPECTOR) }
                 )
             }
@@ -87,13 +90,11 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                 PcRow(
                     title = "用量统计",
                     summary = "请求、Tokens 与额度概览",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.USAGE) }
                 )
                 PcRow(
                     title = "调用记录",
                     summary = "模型、扣费账号、Tokens 与积分消耗",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.RECORDS) }
                 )
             }
@@ -106,14 +107,12 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                 PcRow(
                     title = "提示词注入",
                     summary = "接管 system / 指纹清洗 / 降级开关",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.PROMPT) }
                 )
                 // 定时参数决定签到与刷新在什么时间发起，同样是对上游行为的设定
                 PcRow(
                     title = "定时参数",
                     summary = "签到时段 / 额度刷新 / 模型缓存 / 记录保留",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.SCHEDULE) }
                 )
             }
@@ -127,7 +126,6 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                 PcRow(
                     title = "存储占用",
                     summary = "数据库体积、目录占用与清理",
-                    value = "›",
                     onClick = { onOpenSub(SubPage.STORAGE) }
                 )
             }
@@ -172,25 +170,37 @@ private fun SwitchRow(
     checked: Boolean,
     onChange: (Boolean) -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().padding(vertical = PcTokens.SpaceS / 2)) {
-        // 【M3 移植】文本样式全部改取 Material 3 的 typography token：
-        //   原 MiuixTheme.textStyles.main → bodyLarge；
-        //   原 MiuixTheme.textStyles.body2 → bodySmall；
-        //   原 MiuixTheme.colorScheme.onSurfaceVariantSummary → colorScheme.onSurfaceVariant。
-        Text(title, style = MaterialTheme.typography.bodyLarge)
-        Text(
-            summary,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        // 【M3 移植】Miuix 的 Switch 自带左侧留白与固定轨道配色；
-        //   Material 3 的 Switch 轨道默认色对「已开启」状态区分度较低，
-        //   这里显式传 SwitchDefaults.colors()，行为与默认一致，
-        //   只是为了把「配色来自 M3 默认规格」这件事写明确。
+    // 紧凑布局：标题/副标题占左列，开关贴右。
+    //
+    // 原实现是 Column 竖排（标题、副标题、开关各一行），一个开关要吃掉
+    // 约 100dp 高，设置页两组开关就把首屏占满了。改成 Row 后
+    // 单行高度降到约 56dp —— 副标题最多两行，超了省略。
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = PcTokens.SpaceS / 2),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(PcTokens.SpaceM))
         Switch(
             checked = checked,
             onCheckedChange = onChange,
-            colors = SwitchDefaults.colors()
+            colors = SwitchDefaults.colors(),
         )
     }
 }

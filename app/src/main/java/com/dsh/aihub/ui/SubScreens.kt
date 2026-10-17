@@ -249,7 +249,6 @@ fun InspectorScreen(context: Context, app: AppState) {
                 AppRow(
                     title = stamp,
                     summary = "$headerCount 个头 · 账号 ${entry.optString("account").take(6)}",
-                    value = "›",
                     onClick = { detailIndex = index }
                 )
             }
@@ -462,7 +461,6 @@ fun KeepAliveScreen(context: Context, app: AppState) {
                     AppRow(
                         title = "${index + 1}. ${step.title}",
                         summary = step.desc,
-                        value = "›",
                         onClick = {
                             KeepAliveGuide.open(context, step.key)
                             if (step.key == "lock") app.showMessage("本项无法自动跳转：请打开最近任务，下拉本应用卡片后点锁图标")

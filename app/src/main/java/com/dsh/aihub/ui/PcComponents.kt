@@ -1,5 +1,6 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -132,8 +133,28 @@ fun PcRow(
     trailing: @Composable (() -> Unit)? = null
 ) {
     val base = Modifier.fillMaxWidth().padding(vertical = PcTokens.SpaceS / 2)
-    Column(modifier = if (onClick != null) base.clickable(onClick = onClick) else base) {
-        PcRowInner(title, summary, value, valueColor, trailing)
+    if (onClick != null) {
+        // 可点击行必须有「可点击」的视觉信号，否则用户看到一排同样
+        // 样式的文字，分不清哪个能点。
+        //
+        // 三个信号一起用，缺一都会让某些用户看不出来：
+        //   ① 右侧箭头 ›  —— 静态可见，扫一眼就知道这行有下一级
+        //   ② 水波纹     —— 点下去有反馈，确认点击被接收
+        //   ③ 承载层     —— 点击区域覆盖整行（含右侧留白），不是只有文字
+        //
+        // 不可点击行（纯展示）不画箭头，也不响应点击 —— 两者状态就分开了。
+        Column(
+            modifier = base.clickable(
+                onClick = onClick,
+                role = Role.Button,
+            )
+        ) {
+            PcRowInner(title, summary, value, valueColor, trailing, clickable = true)
+        }
+    } else {
+        Column(modifier = base) {
+            PcRowInner(title, summary, value, valueColor, trailing, clickable = false)
+        }
     }
 }
 
@@ -144,7 +165,8 @@ private fun PcRowInner(
     summary: String?,
     value: String?,
     valueColor: Color,
-    trailing: @Composable (() -> Unit)?
+    trailing: @Composable (() -> Unit)?,
+    clickable: Boolean,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f)) {
@@ -184,6 +206,19 @@ private fun PcRowInner(
         if (trailing != null) {
             Spacer(Modifier.width(PcTokens.SpaceM))
             trailing()
+        }
+        // 可点击行统一画一个 › 作为「有下一级」的静态信号。
+        //
+        // 用 Text 画而不是 Icon：M3Icons 的内联 ImageVector 在 release
+        // 包里渲染不出来（见 v1.2.5/v1.2.6 记录），文字方案没有这个风险，
+        // 而且 › 本身就是最常见的引导符。
+        if (clickable) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "›",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            )
         }
     }
 }

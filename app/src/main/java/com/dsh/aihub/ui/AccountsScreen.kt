@@ -1,5 +1,6 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -55,6 +56,9 @@ fun AccountsScreen(context: Context, app: AppState) {
     var pendingExport by remember { mutableStateOf<String?>(null) }
     var pendingExportName by remember { mutableStateOf("workbuddy-accounts.json") }
     var showExportResult by remember { mutableStateOf<String?>(null) }
+    // 连接账号区块的展开状态。默认折叠：它是低频操作，
+    // 常驻展开会把额度汇总和账号操作挤出首屏。
+    var showConnect by remember { mutableStateOf(false) }
     var importError by remember { mutableStateOf<String?>(null) }
     // 积分详情弹窗：按账号单独查看积分来源（签到/奖励/消耗）
     var showCreditDetail by remember { mutableStateOf(false) }
@@ -105,47 +109,125 @@ fun AccountsScreen(context: Context, app: AppState) {
         contentPadding = PaddingValues(top = PcTokens.SpaceM, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(PcTokens.CardGap)
     ) {
-        // ---------------- 登录与导入导出入 ----------------
-        item {
-            PcCard(title = "连接账号") {
-                PcActionGrid(
-                    actions = listOf(
-                        PcAction("国内版登录", primary = true) {
-                            if (activity != null) startOAuth(context, activity, AccountRegion.DOMESTIC, true, app)
-                        },
-                        PcAction("国际版登录") {
-                            if (activity != null) startOAuth(context, activity, AccountRegion.INTERNATIONAL, true, app)
-                        },
-                        PcAction("切换账号登录") {
-                            if (activity != null) {
-                                startOAuth(context, activity, AccountRegion.DOMESTIC, true, app)
-                                app.showMessage("已清空登录态并打开登录窗口")
-                            }
-                        },
-                        PcAction("导入 auth 文件") { importLauncher.launch(arrayOf("application/json", "*/*")) },
-                        PcAction("导出全部账号") {
-                            scope.launch {
-                                val payload = withContext(Dispatchers.IO) { app.exportAllAccounts() }
-                                if (payload.isNullOrBlank()) {
-                                    showExportResult = "导出失败：没有可导出的认证数据"
-                                } else {
-                                    pendingExport = payload
-                                    pendingExportName = "workbuddy-accounts-${app.accounts.length()}.json"
-                                    exportLauncher.launch(pendingExportName)
-                                }
-                            }
-                        }
+        // ---------------- 额度汇总 ----------------
+        //
+        // 置顶理由：进账号页第一件事是看「还剩多少额度」，而不是先划账号列表。
+        // 原来这两块排在账号池之后，账号一多就要滚很久才看得到。
+        //
+        // 顺序：额度汇总 → 连接账号（折叠）→ 批量操作 → 账号池 → 签到结果
+        //
+        // 前三块占地：额度约 80dp（含进度条）、连接账号折叠后一行、
+        // 批量操作约 130dp。首屏基本能看全「还剩多少 + 怎么加账号 + 能做什么」。
+        //
+        // 连接账号为什么折叠：它有 5 个按钮，常驻展开约 260dp，
+        // 会把额度汇总和批量操作挤下去 —— 而它只在「加账号」时用。
+        val summary = app.credits
+        if (summary != null && summary.optInt("known") > 0) {
+            item { SectionTitle(text = "额度汇总") }
+            item {
+                PcCard {
+                    Text(
+                        "${FormatKit.credits(summary.optDouble("remain"))} / ${FormatKit.credits(summary.optDouble("total"))} 积分",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
                     )
+                    Spacer(Modifier.height(PcTokens.SpaceS / 2))
+                    Text(
+                        "已汇总 ${summary.optInt("known")} / ${summary.optInt("accounts")} 个账号",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val total = summary.optDouble("total")
+                    val ratio = if (total > 0) (summary.optDouble("remain") / total).toFloat().coerceIn(0f, 1f) else 0f
+                    Spacer(Modifier.height(PcTokens.SpaceS))
+                    LinearProgressIndicator(progress = { ratio }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+
+
+        // ---------------- 连接账号（折叠式） ----------------
+        //
+        // 默认折叠：这一块有 5 个按钮，常驻会把额度汇总和账号操作挤下去，
+        // 而它只是「加账号」时才用。折叠后只占一行，需要时点开。
+        item {
+            PcCard {
+                PcRow(
+                    title = "连接账号",
+                    summary = if (showConnect) {
+                        "国内版 / 国际版 / 导入导出"
+                    } else {
+                        "国内版登录、国际版登录、导入导出"
+                    },
+                    onClick = { showConnect = !showConnect },
                 )
+                // 用 AnimatedVisibility 而不是直接 if：
+                // 展开/收起有个高度动画，避免内容瞬间跳变。
+                AnimatedVisibility(visible = showConnect) {
+                    Column {
+                        PcActionGrid(
+                            actions = listOf(
+                                PcAction("国内版登录", primary = true) {
+                                    if (activity != null) startOAuth(context, activity, AccountRegion.DOMESTIC, true, app)
+                                },
+                                PcAction("国际版登录") {
+                                    if (activity != null) startOAuth(context, activity, AccountRegion.INTERNATIONAL, true, app)
+                                },
+                                PcAction("切换账号登录") {
+                                    if (activity != null) {
+                                        startOAuth(context, activity, AccountRegion.DOMESTIC, true, app)
+                                        app.showMessage("已清空登录态并打开登录窗口")
+                                    }
+                                },
+                                PcAction("导入 auth 文件") { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                                PcAction("导出全部账号") {
+                                    scope.launch {
+                                        val payload = withContext(Dispatchers.IO) { app.exportAllAccounts() }
+                                        if (payload.isNullOrBlank()) {
+                                            showExportResult = "导出失败：没有可导出的认证数据"
+                                        } else {
+                                            pendingExport = payload
+                                            pendingExportName = "workbuddy-accounts-${app.accounts.length()}.json"
+                                            exportLauncher.launch(pendingExportName)
+                                        }
+                                    }
+                                }
+                            )
+                        )
+                        Spacer(Modifier.height(PcTokens.SpaceS))
+                        Text(
+                            "「切换账号登录」会先清空登录态，用于在同一设备上登录第二个账号；" +
+                                "导入支持 WorkBuddy / CodeBuddy 的 .info 与 JSON 认证文件。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        // ---------------- 批量操作 ----------------
+        item { SectionTitle(text = "账号操作") }
+        item {
+            PcCard {
+                Button(
+                    onClick = { app.refreshCredits() },
+                    enabled = !app.busy,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (app.busy) "刷新中…" else "刷新全部账号额度") }
+                Spacer(Modifier.height(PcTokens.SpaceS))
+                TextButton(
+                    onClick = { app.checkInAll() },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("为全部启用的国内账号签到") }
                 Spacer(Modifier.height(PcTokens.SpaceS))
                 Text(
-                    "「切换账号登录」会先清空登录态，用于在同一设备上登录第二个账号；" +
-                        "导入支持 WorkBuddy / CodeBuddy 的 .info 与 JSON 认证文件。",
+                    "额度会按账号逐个刷新并汇总；批量签到只处理国内账号，国际版额度由上游自动发放。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
+
         // ---------------- 账号池 ----------------
         if (app.accounts.length() == 0) {
             item {
@@ -193,55 +275,6 @@ fun AccountsScreen(context: Context, app: AppState) {
                 )
             }
         }
-
-        // ---------------- 批量操作 ----------------
-        item { SectionTitle(text = "账号操作") }
-        item {
-            PcCard {
-                Button(
-                    onClick = { app.refreshCredits() },
-                    enabled = !app.busy,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(if (app.busy) "刷新中…" else "刷新全部账号额度") }
-                Spacer(Modifier.height(PcTokens.SpaceS))
-                TextButton(
-                    onClick = { app.checkInAll() },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("为全部启用的国内账号签到") }
-                Spacer(Modifier.height(PcTokens.SpaceS))
-                Text(
-                    "额度会按账号逐个刷新并汇总；批量签到只处理国内账号，国际版额度由上游自动发放。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // ---------------- 额度汇总 ----------------
-        val summary = app.credits
-        if (summary != null && summary.optInt("known") > 0) {
-            item { SectionTitle(text = "额度汇总") }
-            item {
-                PcCard {
-                    Text(
-                        "${FormatKit.credits(summary.optDouble("remain"))} / ${FormatKit.credits(summary.optDouble("total"))} 积分",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.height(PcTokens.SpaceS / 2))
-                    Text(
-                        "已汇总 ${summary.optInt("known")} / ${summary.optInt("accounts")} 个账号",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    val total = summary.optDouble("total")
-                    val ratio = if (total > 0) (summary.optDouble("remain") / total).toFloat().coerceIn(0f, 1f) else 0f
-                    Spacer(Modifier.height(PcTokens.SpaceS))
-                    LinearProgressIndicator(progress = { ratio }, modifier = Modifier.fillMaxWidth())
-                }
-            }
-        }
-
         // ---------------- 签到结果 ----------------
         app.checkinResults?.let { results ->
             if (results.length() > 0) {

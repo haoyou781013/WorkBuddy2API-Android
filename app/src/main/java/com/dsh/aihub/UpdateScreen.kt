@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -70,6 +69,9 @@ fun UpdateScreen(context: Context, app: AppState) {
 
     // 已下载但未安装的包，可在重进页面时直接点安装
     var cached by remember { mutableStateOf(UpdateChecker.cachedApks(context).firstOrNull()) }
+    // 全部缓存包：可能有多个历史版本（每次下载一个新文件，旧的不会自动删）。
+    // 单独存一份，用来在「已下载待安装」卡片上显示总量并支持一键清理。
+    var cachedAll by remember { mutableStateOf(UpdateChecker.cachedApks(context)) }
 
     fun openUrl(url: String) {
         runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
@@ -114,6 +116,7 @@ fun UpdateScreen(context: Context, app: AppState) {
                     }
                 }
                 cached = apk
+                cachedAll = UpdateChecker.cachedApks(context)
                 status = "下载完成，正在调起安装…"
                 withContext(Dispatchers.Main) {
                     runCatching { UpdateChecker.install(context, apk) }
@@ -194,7 +197,17 @@ fun UpdateScreen(context: Context, app: AppState) {
                     OutlinedButton(onClick = {
                         runCatching { apk.delete() }
                         cached = UpdateChecker.cachedApks(context).firstOrNull()
+                        cachedAll = UpdateChecker.cachedApks(context)
                     }) { Text("删除") }
+                    // 历史版本会累积（每次下载一个新文件，旧的不会自动删），
+                    // 单文件删除解决不了「攒了十几个包」的情况，再给一个一键清空。
+                    if (cachedAll.size > 1) {
+                        TextButton(onClick = {
+                            cachedAll.forEach { runCatching { it.delete() } }
+                            cachedAll = UpdateChecker.cachedApks(context)
+                            cached = cachedAll.firstOrNull()
+                        }) { Text("清理全部 (${cachedAll.size})") }
+                    }
                 }
             }
         }
@@ -242,11 +255,11 @@ fun UpdateScreen(context: Context, app: AppState) {
                 SectionTitle(text = "最新版本 ${newest.version}")
                 AppCard {
                     if (newest.notes.isNotBlank()) {
-                        // Release body 是 Markdown（`##` 标题、`**粗体**`、列表等）。
-                        // 原样塞进 Text 会把标记符号一起显示出来，所以走轻量渲染。
-                        Box(Modifier.height(240.dp).verticalScroll(rememberScrollState())) {
-                            ReleaseNotes(newest.notes.trim())
-                        }
+                        Text(
+                            newest.notes.trim(),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.height(240.dp).verticalScroll(rememberScrollState())
+                        )
                         Spacer(Modifier.height(SpaceM))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(SpaceM)) {
