@@ -123,3 +123,34 @@
 -keepattributes *Annotation*
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
+
+# ---------------------------------------------------------------------------
+# 9. 内联 ImageVector 图标（m3/M3Icons.kt）
+#
+# 症状：release 包底部导航「只有文字没有图标」，debug 包正常。
+#
+# 原因：M3Icons 用 `by lazy { icon(name, pathData) }` 构建 ImageVector，
+# addPathNodes(String) 解析的是一段**字符串常量**，R8 在 optimize 模式下
+# 判定这条链没有可观测副作用 —— lazy lambda 的返回值没人「读」到
+# 会被当作可消除代码，最终 PathNode / addPathNodes 整段消失。
+#
+# 证据：release 的 dex 里 `addPathNodes` / `PathNode` / `M3Icons` 计数为 0，
+# 但 `ImageVector` 仍在（Compose 自己的引用保住了框架类）。
+#
+# 注意这**不是** tint 或 fill 颜色的问题：fill 用 Black 还是 White
+# 都只是「画出来是不是可见」，而这类是无图标可画。
+# ---------------------------------------------------------------------------
+-keep class com.dsh.aihub.m3.M3Icons { *; }
+-keepclassmembers class com.dsh.aihub.m3.M3Icons {
+    public static ** Overview;
+    public static ** Accounts;
+    public static ** Models;
+    public static ** Apps;
+    public static ** Settings;
+    public static ** Growth;
+}
+-keep class androidx.compose.ui.graphics.vector.PathNode { *; }
+-keep class androidx.compose.ui.graphics.vector.PathNode$** { *; }
+-keepclassmembers class androidx.compose.ui.graphics.vector.ImageVectorKt {
+    public static *** addPathNodes(...);
+}
