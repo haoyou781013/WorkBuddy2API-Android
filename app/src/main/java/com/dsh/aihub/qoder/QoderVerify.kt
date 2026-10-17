@@ -132,9 +132,34 @@ object QoderVerify {
 
         if (!exchange.isSuccess) {
             lines += ""
-            lines += "两个区域都失败。若 PAT 是在 qoder.com 控制台创建的，"
-            lines += "请确认账号已完成实名、PAT 未被撤销。"
+            lines += "两个区域都失败。请确认 PAT 未过期、账号已验证。"
+            return Result(false, lines)
         }
-        return Result(exchange.isSuccess, lines)
+
+        // 国内网关通了 → 继续探测签到。
+        // 之前这里也是直接返回，用户看不到签到状态 —— 同一个坑踩了两次
+        // （上次是国际区提前 return，这次是国内网关提前 return）。
+        // 教训：验证与签到是两条链路，任何一条通了都不该终止后续探测。
+        lines += ""
+        lines += "—— 签到接口探测 ——"
+        val claim = QoderClaim(personalToken)
+        runCatching { claim.listCampaigns() }
+            .onSuccess { r ->
+                if (r.ok) {
+                    lines += "✓ 活动接口可用（${r.message}）"
+                    if (r.campaigns.isEmpty()) {
+                        lines += "  当前没有活动"
+                    } else {
+                        r.campaigns.forEach { c ->
+                            lines += "  · ${c.title}  ${if (c.claimable) "可领取" else "已领/不可领"}"
+                        }
+                    }
+                } else {
+                    lines += "✗ ${r.message}"
+                }
+            }
+            .onFailure { e -> lines += "✗ 签到探测异常：${e.message}" }
+
+        return Result(true, lines)
     }
 }
