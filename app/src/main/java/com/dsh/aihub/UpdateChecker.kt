@@ -66,7 +66,15 @@ object UpdateChecker {
         val publishedAt: String,
     )
 
-    /** 一次扫描的结果：全部版本（已按版本号降序）+ 最新正式版下标。 */
+    /**
+     * 一次扫描的结果。
+     *
+     * @param all     全部版本，按版本号降序
+     * @param latest  最新**正式版**；没有正式版时退化为最新预发布
+     *
+     * 为什么单独留 latest：界面上「当前版本 / 最新版本」的对比要用稳定版口径，
+     * 而测试通道的列表又需要看到预发布。两者口径不同，不能混用一个字段。
+     */
     data class Scan(
         val all: List<Release>,
         val latest: Release?,
@@ -78,6 +86,19 @@ object UpdateChecker {
         /** 是否有比 [current] 新的正式版（预发布不算）。 */
         fun hasStableNewer(current: String): Boolean =
             all.any { !it.prerelease && compareSemver(it.tag, current) > 0 }
+
+        /**
+         * 按通道取候选列表，已按版本号降序。
+         *
+         * 正式通道只返回非预发布版本：稳定版用户不该被 alpha/beta 打扰。
+         * 测试通道返回全部（含预发布），供主动尝鲜的用户使用。
+         */
+        fun channel(includePrerelease: Boolean): List<Release> =
+            if (includePrerelease) all else all.filter { !it.prerelease }
+
+        /** 该通道下比 [current] 新的首个版本。 */
+        fun newerIn(current: String, includePrerelease: Boolean): Release? =
+            channel(includePrerelease).firstOrNull { compareSemver(it.tag, current) > 0 }
     }
 
     class CheckError(message: String) : Exception(message)

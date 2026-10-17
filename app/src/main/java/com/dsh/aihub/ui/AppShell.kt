@@ -145,7 +145,7 @@ fun AppShell(context: Context, app: AppState) {
                         SubPage.PROMPT -> PromptScreen(context)
                         SubPage.RECORDS -> RecordsScreen(context, app)
                         SubPage.SCHEDULE -> ScheduleScreen(context, app)
-                        SubPage.UPDATE -> UpdateScreen(context)
+                        SubPage.UPDATE -> UpdateScreen(context, app)
                         SubPage.ABOUT -> AboutScreen(context) { sub = SubPage.UPDATE }
                         SubPage.NONE -> Unit
                     }

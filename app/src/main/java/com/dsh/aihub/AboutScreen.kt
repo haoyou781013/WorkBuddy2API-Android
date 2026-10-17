@@ -96,7 +96,7 @@ fun AboutScreen(context: Context, onOpenUpdate: () -> Unit) {
         }
 
         Spacer(Modifier.height(SpaceM))
-        SectionTitle(text = "使用限制")
+        SectionTitle(text = "使用限制（优先遵从原项目要求）")
         AppCard {
             Attribution.USAGE_NOTICE.forEach { line ->
                 Row {

@@ -17,6 +17,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,6 +36,7 @@ import com.dsh.aihub.m3.SectionTitle
 import com.dsh.aihub.m3.SpaceL
 import com.dsh.aihub.m3.SpaceM
 import com.dsh.aihub.m3.SpaceS
+import com.dsh.aihub.ui.AppState
 import com.dsh.aihub.ui.PcRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -48,7 +50,9 @@ import java.io.File
  * 用户可以装任意历史版本——需要回退时不必先卸载。
  */
 @Composable
-fun UpdateScreen(context: Context) {
+fun UpdateScreen(context: Context, app: AppState) {
+    // 更新通道来自设置。"stable" 只看正式版，"beta" 含预发布。
+    val isBeta = app.settings.optString("updateChannel", "stable") == "beta"
     val scope = rememberCoroutineScope()
     val current = remember { UpdateChecker.currentVersion(context) }
 
@@ -77,10 +81,13 @@ fun UpdateScreen(context: Context) {
             try {
                 val r = withContext(Dispatchers.IO) { UpdateChecker.scan(context) }
                 scan = r
+                val cand = r.newerIn(current, isBeta)
                 status = when {
-                    r.hasStableNewer(current) -> "发现新版本"
-                    r.all.isEmpty() -> "仓库暂无可用版本"
-                    else -> "已是最新版本 · 共扫描 ${r.all.size} 个版本"
+                    cand != null -> "发现新版本 ${cand.version}"
+                    r.channel(isBeta).isEmpty() -> "仓库暂无可用版本"
+                    else -> "已是最新版本 · " +
+                        "${if (isBeta) "测试通道" else "正式通道"} " +
+                        "${r.channel(isBeta).size} 个版本"
                 }
             } catch (e: UpdateChecker.CheckError) {
                 error = e.message; status = null
@@ -133,13 +140,41 @@ fun UpdateScreen(context: Context) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     LabelMain("AIHub $current")
-                    LabelSummary("发布源：GitHub Releases")
+                    LabelSummary(
+                        if (isBeta) "测试通道 · 含预发布版本"
+                        else "正式通道 · 仅稳定版"
+                    )
                 }
                 if (scanning) {
                     CircularProgressIndicator(Modifier.height(24.dp), strokeWidth = 2.dp)
                 } else {
                     Button(onClick = { runScan() }) { Text("扫描版本") }
                 }
+            }
+        }
+
+        // 通道切换。默认正式：预发布版本未经充分验证，不该默认推给所有人。
+        // 切到测试通道要重新扫描，否则列表仍是上一个通道的结果。
+        Spacer(Modifier.height(SpaceM))
+        AppCard {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    LabelMain("接收测试版")
+                    LabelSummary(
+                        if (isBeta) "会提示预发布版本，可能不稳定；可用于提前试用与回退验证"
+                        else "只提示正式版。测试版需在此手动开启"
+                    )
+                }
+                Switch(
+                    checked = isBeta,
+                    onCheckedChange = { on ->
+                        app.saveSetting("updateChannel", if (on) "beta" else "stable")
+                        // 切换通道后旧列表口径已失效，清掉并让用户重扫，
+                        // 避免"开了测试版却还是看不到"的困惑
+                        scan = null
+                        status = "通道已切换为${if (on) "测试版" else "正式版"}，请重新扫描"
+                    }
+                )
             }
         }
 
@@ -198,8 +233,8 @@ fun UpdateScreen(context: Context) {
 
         val s = scan
         if (s != null && s.all.isNotEmpty()) {
-            val newest = s.latest
-            val hasNew = newest != null && UpdateChecker.compareSemver(newest.tag, current) > 0
+            val newest = s.newerIn(current, isBeta)
+            val hasNew = newest != null
 
             if (newest != null && hasNew) {
                 Spacer(Modifier.height(SpaceM))
@@ -225,11 +260,14 @@ fun UpdateScreen(context: Context) {
 
             Spacer(Modifier.height(SpaceM))
             TextButton(onClick = { showHistory = !showHistory }) {
-                Text(if (showHistory) "收起历史版本" else "查看历史版本（${s.all.size}）")
+                Text(
+                    if (showHistory) "收起历史版本"
+                    else "查看历史版本（${s.channel(isBeta).size}）"
+                )
             }
             if (showHistory) {
                 AppCard {
-                    s.all.forEach { r ->
+                    s.channel(isBeta).forEach { r ->
                         val isCur = UpdateChecker.compareSemver(r.tag, current) == 0
                         PcRow(
                             title = "v${r.version}" + if (r.prerelease) "（预发布）" else "",
