@@ -64,7 +64,31 @@ object QoderVerify {
         rsa.onSuccess { lines += "✓ RSA 公钥可用（密文 $it 字节）" }
             .onFailure { lines += "✗ RSA 公钥异常：${it.message}" }
 
-        // ④ 真实请求：PAT → jobToken
+        // ④ 区域探测：国际区还是国内网关？
+        //
+        // PAT 在哪个控制台创建，就只能用于那个区域。发错区域返回 401，
+        // 但 401 本身不告诉你「区域错了」还是「token 无效」，所以两个都试。
+        lines += ""
+        lines += "—— 区域探测 ——"
+        val intl = QoderIntlClient(personalToken)
+        val intlResult = runCatching { intl.probeAgents() }
+        intlResult.onSuccess {
+            lines += "✓ 国际区（api.qoder.com）可用"
+            lines += "  响应前 200 字符：${it.take(200)}"
+        }.onFailure { e ->
+            lines += "✗ 国际区不可用：${e.message?.take(200)}"
+        }
+
+        if (intlResult.isSuccess) {
+            lines += ""
+            lines += "结论：这张 PAT 属于国际区，应走标准 Bearer 协议。"
+            lines += "国内网关的 COSY 签名链路对它是无用的。"
+            return Result(true, lines)
+        }
+
+        // ⑤ 国内网关：PAT → jobToken（需 COSY 签名）
+        lines += ""
+        lines += "—— 国内网关（gateway.qoder.com.cn）——"
         val exchange = runCatching { QoderClient(context).exchangeJobToken(personalToken) }
         exchange.onSuccess { json ->
             lines += "✓ jobToken 获取成功"
@@ -82,6 +106,11 @@ object QoderVerify {
             lines += "✗ jobToken 获取失败：${e.message}"
         }
 
+        if (!exchange.isSuccess) {
+            lines += ""
+            lines += "两个区域都失败。若 PAT 是在 qoder.com 控制台创建的，"
+            lines += "请确认账号已完成实名、PAT 未被撤销。"
+        }
         return Result(exchange.isSuccess, lines)
     }
 }

@@ -19,6 +19,17 @@ import java.util.UUID
  * 规则、签名串顺序、公钥）出错都会表现为笼统的 401，无法定位。
  * 一步一验证比一次性写完再调试快得多。
  */
+// 区域域名。qoder.com / qoder.sh 是国际区，gateway.qoder.com.cn 是国内网关。
+//
+// 在 qoder.com 控制台创建的 PAT 只能用于国际区 —— 发到国内网关必然 401。
+// 而且两套域名的**协议完全不同**：
+//   国际区   → 标准 Bearer + REST，无需签名
+//   国内网关 → COSY 签名 + 自定义编码 + RSA
+// 所以选错区域不只是换个 URL，整条链路都不一样。
+internal const val BASE_INTL = "https://api.qoder.com"
+internal const val BASE_INTL_OPENAPI = "https://openapi.qoder.sh"
+internal const val BASE_CN = "https://gateway.qoder.com.cn"
+
 class QoderClient(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("qoder", Context.MODE_PRIVATE)
@@ -118,8 +129,45 @@ class QoderClient(private val context: Context) {
 
     companion object {
         private const val TAG = "QoderClient"
-        private const val AUTH_BASE = "https://gateway.qoder.com.cn"
+        private const val AUTH_BASE = BASE_CN
         private const val KEY_MACHINE_ID = "machine_id"
         private const val KEY_MACHINE_TOKEN = "machine_token"
+    }
+}
+
+/**
+ * 国际区（qoder.com / qoder.sh）的标准 REST 客户端。
+ *
+ * 与国内网关的区别：这里**不需要** COSY 签名、自定义编码或 RSA 加密，
+ * 只是一个普通 Bearer 请求。协议简单得多，也因此更稳定。
+ *
+ * 用 /api/v1/cloud/agents 做探活：它是官方文档里列出的第一个业务接口，
+ * 只要能返回数据就说明 PAT 有效且区域正确。
+ */
+class QoderIntlClient(private val personalToken: String) {
+
+    /** 探活。成功返回原始 JSON 文本，失败抛 IOException 并带上网关回应。 */
+    fun probeAgents(): String = get("$BASE_INTL/api/v1/cloud/agents?limit=1")
+
+    /** 另一个探活端点，走 openapi 域。两个都试可以区分「PAT 无效」与「区域错」。 */
+    fun probeOpenApi(): String = get("$BASE_INTL_OPENAPI/api/v1/cloud/agents?limit=1")
+
+    private fun get(urlStr: String): String {
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 20_000
+            readTimeout = 30_000
+            setRequestProperty("Authorization", "Bearer $personalToken")
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() } ?: ""
+            if (code !in 200..299) throw IOException("HTTP $code: ${text.take(400)}")
+            text
+        } finally {
+            conn.disconnect()
+        }
     }
 }
