@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.joy4fire.workbuddy2api"
+    namespace = "com.dsh.aihub"
 
     /**
      * compileSdk 可配置化（逃生口）。
@@ -27,13 +27,13 @@ android {
     compileSdkVersion(compileSdkName)
 
     defaultConfig {
-        applicationId = "com.joy4fire.workbuddy2api"
+        applicationId = "com.dsh.aihub"
         minSdk = 24
         targetSdk = 36
         // 版本号随功能变更递增：便于在设备上区分"是否装上的是新版"
         // （同 versionCode 覆盖安装后，界面上无从判断装的是哪一版）。
-        versionCode = 19
-        versionName = "1.3.4-dev"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     buildTypes {

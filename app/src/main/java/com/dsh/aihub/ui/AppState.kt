@@ -1,0 +1,577 @@
+package com.dsh.aihub.ui
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.dsh.aihub.ApiHostService
+import com.dsh.aihub.FormatKit
+import com.dsh.aihub.NativeCore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * 界面状态与后端调用的唯一持有者 —— 所有页面都从这里取数据、发动作。
+ *
+ * 设计要点（与原纯 View 实现的关系）：
+ *   原 MainActivity 用「render(page) 全量重建视图 + io 线程池 + main.post 回主线程」的模式。
+ *   Compose 下等价物是「mutableStateOf 驱动重组」，因此这里把原先散在 Activity 里的
+ *   数据缓存（accounts / modelCache / creditCache / checkinResults / events）集中成状态字段，
+ *   业务调用仍然走 [NativeCore]，一行都没重写。
+ *
+ *   所有耗时调用都在 [scope]（IO 调度器）上执行，结果回写到 state 触发重组，
+ *   因此每个动作都自带 loading/error 的落点，不需要页面各自管理。
+ */
+class AppState(private val context: Context) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // ---------------------------------------------------------------- 基础状态
+
+    /** 是否正在执行耗时操作（刷新额度、模型、签到等），用于按钮禁用与进度提示。 */
+    var busy by mutableStateOf(false); private set
+
+    /** 最近一次操作的结果提示（替代原 toast + events 双写）。 */
+    var message by mutableStateOf<String?>(null); private set
+
+    /** 操作日志（原 events，倒序展示，最多 50 条）。 */
+    val events = mutableStateListOf<String>()
+
+    var accounts by mutableStateOf<JSONArray>(JSONArray()); private set
+    var models by mutableStateOf<JSONArray?>(null); private set
+    var credits by mutableStateOf<JSONObject?>(null); private set
+    var checkinResults by mutableStateOf<JSONArray?>(null); private set
+    var usageSummary by mutableStateOf<JSONObject?>(null); private set
+    var usageRecords by mutableStateOf<JSONArray>(JSONArray()); private set
+    var usageTotal by mutableStateOf(0); private set
+    var usageSeries by mutableStateOf<JSONArray>(JSONArray()); private set
+
+    /** 上次成功拉取用量数据的时间戳，用于 [loadUsageIfStale] 判断是否需要重新查询。 */
+    private var usageLoadedAt by mutableStateOf(0L)
+    var apps by mutableStateOf<JSONArray>(JSONArray()); private set
+    var settings by mutableStateOf<JSONObject>(JSONObject()); private set
+
+    /** 当前选中的账号（成长中心等按账号操作的页面用）。 */
+    var selectedAccount by mutableStateOf<String?>(null); private set
+
+    /**
+     * 网关服务是否运行中。
+     *
+     * 为什么放在这里而不是页面里直接读 `ApiHostService.running`：
+     * 那是普通静态变量，读取不会建立 Compose 的订阅关系 ——
+     * 点「启动服务」后即便服务已就绪，界面也不会重组，用户看到按钮一直停在
+     * 「启动服务」，误以为"点了半天没反应"。放进 mutableStateOf 后由广播驱动重组。
+     */
+    var serviceRunning by mutableStateOf(ApiHostService.running); private set
+
+    /** 服务状态变更时的附加说明（来自广播 message，可选）。 */
+    var serviceMessage by mutableStateOf<String?>(null); private set
+
+    /** 由宿主 Activity 在收到 ACTION_STATE 广播时调用。 */
+    /**
+     * 由宿主 Activity 在收到 ACTION_STATE 广播时调用。
+     *
+     * 必须同时清除 [startingUp]：否则「启动 → 停止 → 再启动」流程里，
+     * 第一次启动把 startingUp 置 true 后，即便收到 running 广播也不会复位，
+     * 概览页按钮的 `enabled = !startingUp` 就永久为 false，表现为
+     * 「反复启停后按钮全变灰、再也停不掉服务」。
+     */
+    fun updateServiceState(running: Boolean, message: String? = null) {
+        serviceRunning = running
+        startingUp = false
+        if (!message.isNullOrBlank()) serviceMessage = message
+        bump()
+    }
+
+    /**
+     * 请求重构信号：Compose 的 mutableStateOf 对 JSONArray/JSONObject 内部修改不敏感
+     * （它们是可变对象，引用没变就不会触发重组）。凡是就地改过 JSON 数据后，
+     * 必须 bump 一次 [revision] 让界面知道要重读。
+     */
+    var revision by mutableStateOf(0); private set
+
+    fun dispose() = scope.cancel()
+
+    // ---------------------------------------------------------------- 内部工具
+
+    private fun bump() { revision++ }
+
+    private fun record(text: String) {
+        events.add(0, text)
+        while (events.size > 50) events.removeAt(events.size - 1)
+        message = text
+    }
+
+    /**
+     * 统一的异步任务入口：负责 busy 置位、异常捕获、日志与状态落点。
+     *
+     * 为什么把 try/catch 收在这里：原实现每个动作都写一遍
+     * runCatching + main.post + showError，十几处重复且漏一处就会崩界面。
+     */
+    private fun task(name: String, block: () -> String) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            val result = runCatching { block() }
+            withContext(Dispatchers.Main) {
+                result.fold(
+                    onSuccess = { record("$name：$it") },
+                    onFailure = { record("$name 失败：${it.message ?: it.javaClass.simpleName}") }
+                )
+                busy = false
+                bump()
+            }
+        }
+    }
+
+    fun clearMessage() { message = null }
+
+    // ---------------------------------------------------------------- 加载
+
+    /** 刷新所有页面依赖的数据（进入应用时调一次）。 */
+    /**
+     * 刷新页面依赖的数据。
+     *
+     * 【为什么把 loadUsage 从这里移走】
+     *   loadUsage 会连续执行三个重量级查询：
+     *     · usageSummary    —— 全表聚合
+     *     · usageRecent     —— 取 100 条记录（含正文字段）
+     *     · usageTimeseries —— 按小时分组聚合，表越大越慢
+     *   而 NativeStore 使用单把全局锁，这些查询与"读设置/读账号"互斥。
+     *   原先 refreshAll 在应用启动时就把它们全部发起，于是用户刚打开应用、
+     *   正准备点进某个页面时，主线程要读库就排在这批查询后面，
+     *   表现为"点击后画面停住约 3 秒才跳转"。
+     *
+     *   现在改为按需加载：记录页/用量页各自在进入时调 loadUsageIfStale()，
+     *   启动阶段只加载界面首屏真正需要的轻量数据。
+     */
+    fun refreshAll() {
+        // 顺序有意为之：settings 放最前，且先于其它任何读库操作。
+        //
+        // NativeStore 用单把全局锁把 38 个方法串行化（即便已启用 WAL，
+        // 这个 synchronized(lock) 也把读写并发的好处抵消掉了）。
+        // 因此启动阶段的读库任务是排队执行的，谁排在前面谁先完成。
+        // 设置页依赖 settings —— 把它排到队首，用户点进设置时数据已在内存，
+        // 不必再排队等锁。
+        loadSettings()
+        loadAccounts()
+        loadApps()
+        loadModelsFromCache()
+        // 刻意不调 loadUsage()：它含全表聚合与按小时分组，属最重的查询，
+        // 交由记录页/用量页进入时按需触发。
+    }
+
+    fun loadAccounts() {
+        scope.launch {
+            val list = runCatching { NativeCore.listAccounts(context) }.getOrDefault(JSONArray())
+            val summary = runCatching { NativeCore.creditsSummary(context) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                accounts = list
+                credits = summary
+                // JSONArray 不是 Collection，需手工遍历（它没有 none / firstOrNull）。
+                val parsed = (0 until list.length()).mapNotNull { list.optJSONObject(it) }
+                val current = selectedAccount
+                if (current == null || parsed.none { it.optString("account_key", it.optString("uid")) == current }) {
+                    val first = parsed.firstOrNull()
+                    selectedAccount = first?.optString("account_key")?.takeIf { it.isNotBlank() }
+                        ?: first?.optString("uid")
+                }
+                bump()
+            }
+        }
+    }
+
+    fun selectAccount(key: String) {
+        selectedAccount = key
+    }
+
+    fun loadSettings() {
+        scope.launch {
+            // 读设置是设置页的关键路径：若这里耗时以秒计，就是主线程等库锁的证据。
+            val s = runCatching { NativeCore.settings(context) }.getOrDefault(JSONObject())
+            withContext(Dispatchers.Main) { settings = s; bump() }
+        }
+    }
+
+    fun loadApps() {
+        scope.launch {
+            val list = runCatching { NativeCore.listApps(context) }.getOrDefault(JSONArray())
+            withContext(Dispatchers.Main) { apps = list; bump() }
+        }
+    }
+
+    /** 模型目录：先用缓存填充，避免每次进来都是空页。 */
+    fun loadModelsFromCache() {
+        scope.launch {
+            val cached = runCatching { NativeCore.modelsCached(context) }.getOrNull()
+                ?: runCatching { NativeCore.store(context).getModelCache()?.optJSONArray("models") }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (cached != null && cached.length() > 0) models = cached
+                bump()
+            }
+        }
+    }
+
+    fun loadUsage() {
+        scope.launch {
+            val summary = runCatching { NativeCore.usageSummary(context) }.getOrNull()
+            val recent = runCatching { NativeCore.usageRecent(context, pageSize = 100) }.getOrNull()
+            val series = runCatching { NativeCore.usageTimeseries(context) }.getOrDefault(JSONArray())
+            withContext(Dispatchers.Main) {
+                usageSummary = summary
+                usageRecords = recent?.optJSONArray("records") ?: JSONArray()
+                usageTotal = recent?.optInt("total") ?: 0
+                usageSeries = series
+                usageLoadedAt = System.currentTimeMillis()
+                bump()
+            }
+        }
+    }
+
+    /**
+     * 进入记录页时调用：只在数据「过期」时才重新拉取。
+     *
+     * 为什么需要它：此前 loadUsage 只在 refreshAll() 与删除操作后触发，
+     * 切到记录页不会重新查询 —— 新产生的调用记录必须手动点刷新才看得到。
+     *
+     * 为什么不是每次进入都拉：记录页在 Tab 间来回切换很频繁，
+     * 每次都查一次数据库（三条 SQL 且可能扫全表）没有必要。
+     * 用 2 秒的短窗口：既能让用户立刻看到刚产生的记录，
+     * 又能在快速来回切 Tab 时避免重复查询。
+     */
+    fun loadUsageIfStale(maxAgeMs: Long = 2_000) {
+        if (System.currentTimeMillis() - usageLoadedAt < maxAgeMs) return
+        loadUsage()
+    }
+
+    // ---------------------------------------------------------------- 服务
+
+    /** 是否处于「已请求启动、尚未就绪」的中间态。 */
+    var startingUp by mutableStateOf(false); private set
+
+    /**
+     * 启停网关服务。
+     *
+     * 关于"启动很久没反应"：服务启动时要做账号校验、模型预热等网络动作，
+     * 期间是「已发出启动请求，但还没就绪」的中间态。原实现只在日志里输出，
+     * 界面无从体现，用户会以为按钮失效。这里在请求发出后立刻把状态置为
+     * 「启动中」，并由宿主在收到广播后切成最终状态。
+     */
+    fun toggleServer(activity: Activity?) {
+        val target = activity ?: context as? Activity ?: return
+        if (serviceRunning) {
+            target.startService(Intent(target, ApiHostService::class.java).setAction(ApiHostService.ACTION_STOP))
+            record("已请求停止本地 API")
+        } else {
+            if (NativeCore.loadAccount(context) == null) {
+                message = "请先导入或登录 WorkBuddy 账号"
+                return
+            }
+            startingUp = true
+            val intent = Intent(target, ApiHostService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= 26) target.startForegroundService(intent) else target.startService(intent)
+            record("正在启动本地 API（需校验账号并预热模型，请稍候）")
+            // 超时兜底：若 20 秒后仍未收到广播，说明启动失败，清掉"启动中"避免卡住。
+            scope.launch {
+                kotlinx.coroutines.delay(20_000)
+                withContext(Dispatchers.Main) {
+                    if (startingUp && !ApiHostService.running) {
+                        startingUp = false
+                        message = "启动超时：请检查通知权限与账号状态后重试"
+                    }
+                }
+            }
+        }
+        bump()
+    }
+
+    /** 是否处于「已请求启动、尚未就绪」的中间态。 */
+
+    // ---------------------------------------------------------------- 账号
+
+    fun setAccountEnabled(accountKey: String, enabled: Boolean) = task(if (enabled) "启用账号" else "停用账号") {
+        NativeCore.setAccountEnabled(context, accountKey, enabled)
+        loadAccounts()
+        if (enabled) "已启用" else "已停用"
+    }
+
+    fun setAccountPriority(accountKey: String, priority: Int) = task("设置优先级") {
+        if (NativeCore.setAccountPriority(context, accountKey, priority)) {
+            loadAccounts()
+            "优先级已设为 $priority（选号权重 ×${priority + 1}）"
+        } else "设置失败：账号已不存在"
+    }
+
+    fun deleteAccount(accountKey: String, label: String) = task("删除账号") {
+        if (NativeCore.deleteAccount(context, accountKey)) {
+            loadAccounts()
+            "已删除 $label"
+        } else "删除失败：账号已不存在"
+    }
+
+    fun refreshCredits() = task("刷新全部额度") {
+        val response = NativeCore.refreshAllCredits(context)
+        val summary = response.optJSONObject("summary") ?: JSONObject()
+        val results = response.optJSONArray("results") ?: JSONArray()
+        val failed = (0 until results.length()).count { !results.optJSONObject(it).optBoolean("ok") }
+        credits = summary
+        bump()
+        "已刷新 ${results.length() - failed}/${results.length()} 个账号，合计剩余 " +
+            "${FormatKit.credits(summary.optDouble("remain"))} / ${FormatKit.credits(summary.optDouble("total"))} 积分" +
+            if (failed > 0) "，$failed 个失败" else ""
+    }
+
+    fun checkInAll() = task("全部账号签到") {
+        val response = NativeCore.checkInAll(context)
+        val results = response.optJSONArray("results") ?: JSONArray()
+        checkinResults = results
+        // 签到会改变额度（并在服务端侧复查后写回本地缓存），因此顺带刷新账号列表，
+        // 否则账号页仍显示签到前的旧额度，看起来像"签到了却没拿到积分"。
+        loadAccounts()
+        bump()
+        val success = (0 until results.length()).count { results.optJSONObject(it).optBoolean("ok") }
+        val failed = (0 until results.length()).count {
+            val item = results.optJSONObject(it)
+            !item.optBoolean("ok") && !item.optBoolean("skipped")
+        }
+        val skipped = results.length() - success - failed
+        // 汇总本次实际到账的积分（仅统计成功且能算出增量的账号）
+        val gained = (0 until results.length()).sumOf { i ->
+            val item = results.optJSONObject(i) ?: return@sumOf 0.0
+            if (item.isNull("credits_gained")) 0.0 else item.optDouble("credits_gained", 0.0)
+        }
+        buildString {
+            append("签到完成：成功/已签 $success，失败 $failed")
+            if (skipped > 0) append("，跳过 $skipped")
+            append("；本次合计 +").append("%.1f".format(gained)).append(" 积分")
+            append("（详情见账号页）")
+        }
+    }
+
+    fun refreshModels() = task("刷新模型") {
+        val response = NativeCore.refreshAllModels(context)
+        val data = response.optJSONArray("models") ?: JSONArray()
+        val failures = response.optJSONArray("failures") ?: JSONArray()
+        models = data
+        bump()
+        if (failures.length() == 0) "已加载 ${data.length()} 个模型（国内版 / 国际版均成功）"
+        else "已加载 ${data.length()} 个模型；" + (0 until failures.length()).joinToString("；") {
+            val item = failures.optJSONObject(it)
+            "${item.optString("region_label")}：${item.optString("message")}"
+        }
+    }
+
+    // ---------------------------------------------------------------- 记录 / 应用 / 设置
+
+    /**
+     * 读取某账号的积分详情（上游实时余额 + 资源包 + 本地账本）。
+     * 在 IO 线程执行，避免阻塞界面；上游失败时内部已降级为本地缓存值，不会抛异常。
+     */
+    fun loadCreditDetail(accountKey: String): JSONObject =
+        runCatching { NativeCore.creditDetail(context, accountKey) }
+            .getOrElse { JSONObject().put("account_key", accountKey).put("refresh_error", it.message ?: "读取失败") }
+
+    fun clearCreditLedger(accountKey: String) = task("清空积分账本") {
+        val removed = NativeCore.clearCreditLedger(context, accountKey)
+        "已清空 $removed 条积分记录"
+    }
+
+    fun deleteUsage(id: Long) = task("删除记录 #$id") {
+        loadUsage()
+        if (NativeCore.deleteUsage(context, id)) "已删除记录 #$id" else "这条记录已不存在"
+    }
+
+    /**
+     * 读取单条记录的完整内容（含注入后的提示词、模型输出、思考链）。
+     *
+     * 为什么按需读取而不是直接放进列表：
+     *   usageRecent 默认走 light 模式，只取元信息列 —— 这是有意设计，
+     *   因为 input/output/reasoning 三个正文字段合计可能很大（单条上限各 32 万字符），
+     *   一次拉 100 条会让列表查询与内存暴涨。因此列表不带正文，
+     *   点开某条时再用 getUsage(id) 精确取一条。
+     *
+     * @return 内容文本；读取失败返回错误说明（不抛异常，便于直接展示在弹窗里）
+     */
+    fun loadUsageDetail(id: Long): String = runCatching {
+        val record = NativeCore.getUsage(context, id)
+            ?: return@runCatching "记录 #$id 已不存在"
+        buildString {
+            append("【输入（含注入后的 system 提示词）】\n")
+            append(record.optString("input_content").ifBlank { "（空）" })
+            append("\n\n【输出】\n")
+            append(record.optString("output_content").ifBlank { "（空）" })
+            val reasoning = record.optString("reasoning_content")
+            if (reasoning.isNotBlank()) {
+                append("\n\n【思考链】\n").append(reasoning)
+            }
+        }
+    }.getOrElse { "读取失败：${it.message ?: it.javaClass.simpleName}" }
+
+    fun clearUsage(total: Int) = task("清空记录") {
+        val removed = NativeCore.clearUsage(context)
+        loadUsage()
+        if (removed > 0) "已清空 $removed 条记录（原有 $total 条）" else "没有可清空的记录"
+    }
+
+    fun createApp(name: String, note: String, region: com.dsh.aihub.AccountRegion, customKey: String?): JSONObject? {
+        var created: JSONObject? = null
+        task(if (created == null) "创建 API Key" else "保存 API Key") {
+            created = NativeCore.createApp(context, name, note, region, customKey)
+            loadApps()
+            "已创建 ${created?.optString("name")}"
+        }
+        return created
+    }
+
+    fun updateApp(id: Long, name: String, note: String, region: com.dsh.aihub.AccountRegion, replacement: String?): JSONObject? {
+        var saved: JSONObject? = null
+        task("保存 API Key") {
+            saved = NativeCore.updateApp(context, id, name, note, region, replacement)
+            loadApps()
+            "已保存 ${saved?.optString("name")}"
+        }
+        return saved
+    }
+
+    fun appKey(id: Long): String? = runCatching { NativeCore.getAppKey(context, id) }.getOrNull()
+
+    fun toggleApp(id: Long, name: String, enabled: Boolean) = task(if (enabled) "启用应用" else "停用应用") {
+        if (NativeCore.setAppEnabled(context, id, enabled)) {
+            loadApps()
+            if (enabled) "已启用 $name" else "已停用 $name"
+        } else "状态更新失败，请重试"
+    }
+
+    fun deleteApp(id: Long, name: String) = task("删除应用") {
+        if (NativeCore.deleteApp(context, id)) {
+            loadApps()
+            "已删除 $name"
+        } else "删除失败，请重试"
+    }
+
+    /**
+     * 保存单项设置。
+     *
+     * 全部放到 IO 线程：saveSettings 是同步 SQLite 写入（含 WAL 提交），
+     * loadSettings 又要再读一次全表。此前两者都在主线程执行，
+     * 点一次「保存」会掉若干帧 —— 这是设置页卡顿的另一半原因。
+     *
+     * 写完后立即把新值合并进内存中的 settings（乐观更新），
+     * 让界面马上反映结果；随后再异步拉一次库做最终对齐。
+     */
+    fun saveSetting(key: String, value: String) {
+        scope.launch {
+            runCatching { NativeCore.saveSettings(context, JSONObject().put(key, value)) }
+                .onFailure {
+                    withContext(Dispatchers.Main) { message = "保存失败：${it.message ?: "写入被拒绝"}" }
+                }
+            withContext(Dispatchers.Main) {
+                // 乐观更新：避免"点了保存但界面还是旧值"的观感
+                settings = JSONObject().apply {
+                    settings.keys().forEach { put(it, settings.opt(it)) }
+                    put(key, value)
+                }
+            }
+            loadSettings()
+        }
+    }
+
+    fun clearWebViewCache() = task("清理 WebView 缓存") {
+        NativeCore.clearWebViewCache(context)
+        "已清理 WebView 缓存"
+    }
+
+    fun trimUsage() = task("截断超长记录") {
+        val count = NativeCore.trimUsage(context)
+        NativeCore.vacuum(context)
+        loadUsage()
+        "已处理 $count 条记录并回收空间"
+    }
+
+    fun cleanupUsage(days: Int) = task("清理过期记录") {
+        val count = NativeCore.cleanupUsage(context, days)
+        NativeCore.vacuum(context)
+        loadUsage()
+        "已清理 $count 条 $days 天前的记录并回收空间"
+    }
+
+    fun storageInfo(): JSONObject = runCatching { NativeCore.storageInfo(context) }.getOrDefault(JSONObject())
+
+    fun storageBreakdown(): JSONObject = runCatching { NativeCore.storageBreakdown(context) }.getOrDefault(JSONObject())
+
+    fun exportAccount(accountKey: String): String? = runCatching { NativeCore.exportAccount(context, accountKey) }.getOrNull()
+
+    fun exportAllAccounts(): String? = runCatching { NativeCore.exportAllAccounts(context) }.getOrNull()
+
+    /** 导入账号（SAF 选中的文件内容已读成字符串）。 */
+    fun importAuth(raw: String) {
+        task("导入账号") {
+            runCatching { JSONObject(raw) }.fold(
+                onSuccess = {
+                    val account = NativeCore.saveAccount(context, it)
+                    loadAccounts()
+                    "账号 ${account.nickname} (${account.uid}) 已导入"
+                },
+                onFailure = {
+                    val result = NativeCore.importAccounts(context, JSONArray(raw))
+                    val imported = result.optJSONArray("imported") ?: JSONArray()
+                    val rejected = result.optJSONArray("rejected") ?: JSONArray()
+                    if (imported.length() == 0) {
+                        throw IllegalStateException(rejected.optJSONObject(0)?.optString("error") ?: "认证文件为空")
+                    }
+                    loadAccounts()
+                    "已导入 ${imported.length()} 个账号" + if (rejected.length() > 0) "，${rejected.length()} 个失败" else ""
+                }
+            )
+        }
+    }
+
+    fun showMessage(text: String) { record(text) }
+
+    /** 请求检查器（出网取证）相关。 */
+    fun inspectorEnabled(): Boolean = com.dsh.aihub.RequestInspector.isEnabled(context)
+    fun inspectorCount(): Int = com.dsh.aihub.RequestInspector.count(context)
+    fun inspectorEntries(): JSONArray = com.dsh.aihub.RequestInspector.entries(context)
+    fun inspectorExport(): String = com.dsh.aihub.RequestInspector.exportText(context)
+    fun setInspectorEnabled(enabled: Boolean) {
+        com.dsh.aihub.RequestInspector.setEnabled(context, enabled)
+        bump()
+    }
+    fun clearInspector() {
+        com.dsh.aihub.RequestInspector.clear(context)
+        record("已清空取证记录")
+    }
+
+    /** 悬浮球（保活加固项）状态与开关。 */
+    fun floatingEnabled(): Boolean = com.dsh.aihub.FloatingWindowKeeper.isEnabled(context)
+    fun floatingPermitted(): Boolean = com.dsh.aihub.FloatingWindowKeeper.hasPermission(context)
+    fun setFloating(enabled: Boolean, activity: Activity?) {
+        val target = activity ?: context as? Activity
+        val keeper = com.dsh.aihub.FloatingWindowKeeper
+        if (enabled && !keeper.hasPermission(context)) {
+            keeper.setEnabled(context, true)
+            keeper.requestPermission(context)
+            record("需授予「显示在其他应用上层」权限")
+        } else {
+            keeper.setEnabled(context, enabled)
+            if (enabled) {
+                if (target != null) keeper.show(target, ApiHostService.PORT)
+                record("悬浮球已开启")
+            } else {
+                keeper.hide(context)
+                record("悬浮球已关闭")
+            }
+        }
+        bump()
+    }
+}
