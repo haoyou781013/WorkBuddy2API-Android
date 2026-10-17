@@ -1,6 +1,8 @@
 package com.dsh.aihub
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +18,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,78 +35,88 @@ import com.dsh.aihub.m3.SectionTitle
 import com.dsh.aihub.m3.SpaceL
 import com.dsh.aihub.m3.SpaceM
 import com.dsh.aihub.m3.SpaceS
+import com.dsh.aihub.ui.PcRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 软件更新页。
+ * 软件更新页（沿用 HY_VQ 的信息布局）。
  *
- * 状态机刻意写成扁平的几个 Boolean 而不是密封类：这个页面的状态组合实际很少
- * （检查中 / 有更新 / 无更新 / 出错 / 下载中），用密封类会让 Compose 的
- * 状态恢复和预览都变复杂，收益不抵成本。
+ * 与"只有一个检查按钮"的做法不同，这里扫描全部版本并列出，
+ * 用户可以装任意历史版本——需要回退时不必先卸载。
  */
 @Composable
 fun UpdateScreen(context: Context) {
     val scope = rememberCoroutineScope()
     val current = remember { UpdateChecker.currentVersion(context) }
 
-    var checking by remember { mutableStateOf(false) }
+    var scanning by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<UpdateChecker.Result?>(null) }
+    var scan by remember { mutableStateOf<UpdateChecker.Scan?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
 
     var progressDone by remember { mutableStateOf(0L) }
     var progressTotal by remember { mutableStateOf(0L) }
-    var downloadedApk by remember { mutableStateOf<File?>(null) }
+    var targetTag by remember { mutableStateOf<String?>(null) }
 
-    fun runCheck() {
-        if (checking) return
-        checking = true; error = null; status = null; downloadedApk = null
+    // 已下载但未安装的包，可在重进页面时直接点安装
+    var cached by remember { mutableStateOf(UpdateChecker.cachedApks(context).firstOrNull()) }
+
+    fun openUrl(url: String) {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+    }
+
+    fun runScan() {
+        if (scanning) return
+        scanning = true; error = null; status = "正在获取版本列表…"
         scope.launch {
             try {
-                val r = withContext(Dispatchers.IO) { UpdateChecker.check(context) }
-                result = r
-                status = if (r.newer) "发现新版本 ${r.latestName}" else "已是最新版本"
+                val r = withContext(Dispatchers.IO) { UpdateChecker.scan(context) }
+                scan = r
+                status = when {
+                    r.hasStableNewer(current) -> "发现新版本"
+                    r.all.isEmpty() -> "仓库暂无可用版本"
+                    else -> "已是最新版本 · 共扫描 ${r.all.size} 个版本"
+                }
             } catch (e: UpdateChecker.CheckError) {
-                error = e.message
+                error = e.message; status = null
             } catch (e: Exception) {
-                error = e.message ?: e.javaClass.simpleName
+                error = e.message ?: e.javaClass.simpleName; status = null
             } finally {
-                checking = false
+                scanning = false
             }
         }
     }
 
-    fun runDownloadAndInstall(r: UpdateChecker.Result) {
-        val url = r.apkUrl
-        if (url == null) { error = "该版本未提供 APK 附件"; return }
+    fun downloadAndInstall(r: UpdateChecker.Release) {
         if (downloading) return
-        downloading = true; error = null; status = "开始下载…"
+        downloading = true; error = null; targetTag = r.tag
         progressDone = 0L; progressTotal = r.apkSize
+        status = "开始下载 ${r.version}…"
         scope.launch {
             try {
                 val apk = withContext(Dispatchers.IO) {
-                    UpdateChecker.download(context, url) { done, total ->
-                        progressDone = done
-                        if (total > 0) progressTotal = total
+                    UpdateChecker.download(context, r) { d, t ->
+                        progressDone = d
+                        if (t > 0) progressTotal = t
                     }
                 }
-                downloadedApk = apk
-                status = "下载完成，可以安装了"
-                // 下载完直接拉起安装器；失败原因交给 catch 展示
+                cached = apk
+                status = "下载完成，正在调起安装…"
                 withContext(Dispatchers.Main) {
                     runCatching { UpdateChecker.install(context, apk) }
                         .onFailure { error = it.message }
                 }
             } catch (e: UpdateChecker.CheckError) {
-                error = e.message
+                error = e.message; status = null
             } catch (e: Exception) {
-                error = e.message ?: e.javaClass.simpleName
+                error = e.message ?: e.javaClass.simpleName; status = null
             } finally {
-                downloading = false
+                downloading = false; targetTag = null
             }
         }
     }
@@ -120,12 +133,32 @@ fun UpdateScreen(context: Context) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     LabelMain("AIHub $current")
-                    LabelSummary("发布渠道：GitHub Releases")
+                    LabelSummary("发布源：GitHub Releases")
                 }
-                if (checking) {
+                if (scanning) {
                     CircularProgressIndicator(Modifier.height(24.dp), strokeWidth = 2.dp)
                 } else {
-                    Button(onClick = { runCheck() }) { Text("检查更新") }
+                    Button(onClick = { runScan() }) { Text("扫描版本") }
+                }
+            }
+        }
+
+        // 已下载未安装：优先展示，避免用户重复下载
+        cached?.let { apk ->
+            Spacer(Modifier.height(SpaceM))
+            AppCard {
+                LabelMain("已下载待安装")
+                LabelSummary("${apk.name} · ${formatBytes(apk.length())}")
+                Spacer(Modifier.height(SpaceS))
+                Row(horizontalArrangement = Arrangement.spacedBy(SpaceM)) {
+                    Button(onClick = {
+                        runCatching { UpdateChecker.install(context, apk) }
+                            .onFailure { error = it.message }
+                    }) { Text("安装") }
+                    OutlinedButton(onClick = {
+                        runCatching { apk.delete() }
+                        cached = UpdateChecker.cachedApks(context).firstOrNull()
+                    }) { Text("删除") }
                 }
             }
         }
@@ -138,17 +171,17 @@ fun UpdateScreen(context: Context) {
         error?.let {
             Spacer(Modifier.height(SpaceM))
             AppCard {
-                Text("出错", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+                Text("出错", style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(SpaceS))
                 Text(it, style = MaterialTheme.typography.bodyMedium)
             }
         }
 
-        // 下载进度：只在下载中或有总量时显示进度条
         if (downloading) {
             Spacer(Modifier.height(SpaceM))
             AppCard {
-                LabelMain("正在下载")
+                LabelMain("正在下载 ${targetTag ?: ""}")
                 LabelSummary(formatBytes(progressDone) +
                     if (progressTotal > 0) " / ${formatBytes(progressTotal)}" else "")
                 Spacer(Modifier.height(SpaceS))
@@ -163,60 +196,64 @@ fun UpdateScreen(context: Context) {
             }
         }
 
-        val r = result
-        if (r != null && r.newer) {
-            Spacer(Modifier.height(SpaceM))
-            SectionTitle(text = "新版本 ${r.latestName}")
-            AppCard {
-                if (r.notes.isNotBlank()) {
-                    Text(
-                        r.notes.trim(),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.height(240.dp).verticalScroll(rememberScrollState())
-                    )
-                    Spacer(Modifier.height(SpaceM))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(SpaceM)) {
-                    Button(
-                        onClick = { runDownloadAndInstall(r) },
-                        enabled = !downloading
-                    ) { Text(if (downloading) "下载中…" else "下载并安装") }
+        val s = scan
+        if (s != null && s.all.isNotEmpty()) {
+            val newest = s.latest
+            val hasNew = newest != null && UpdateChecker.compareSemver(newest.tag, current) > 0
 
-                    OutlinedButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    android.content.Intent(
-                                        android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse(r.releaseUrl)
-                                    )
-                                )
-                            }
-                        }
-                    ) { Text("查看发布页") }
+            if (newest != null && hasNew) {
+                Spacer(Modifier.height(SpaceM))
+                SectionTitle(text = "最新版本 ${newest.version}")
+                AppCard {
+                    if (newest.notes.isNotBlank()) {
+                        Text(
+                            newest.notes.trim(),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.height(240.dp).verticalScroll(rememberScrollState())
+                        )
+                        Spacer(Modifier.height(SpaceM))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(SpaceM)) {
+                        Button(
+                            onClick = { downloadAndInstall(newest) },
+                            enabled = !downloading
+                        ) { Text(if (downloading) "下载中…" else "下载并安装") }
+                        OutlinedButton(onClick = { openUrl(newest.pageUrl) }) { Text("发布页") }
+                    }
                 }
-                downloadedApk?.let { apk ->
-                    Spacer(Modifier.height(SpaceM))
-                    OutlinedButton(
-                        onClick = {
-                            runCatching { UpdateChecker.install(context, apk) }
-                                .onFailure { error = it.message }
-                        }
-                    ) { Text("重新安装") }
+            }
+
+            Spacer(Modifier.height(SpaceM))
+            TextButton(onClick = { showHistory = !showHistory }) {
+                Text(if (showHistory) "收起历史版本" else "查看历史版本（${s.all.size}）")
+            }
+            if (showHistory) {
+                AppCard {
+                    s.all.forEach { r ->
+                        val isCur = UpdateChecker.compareSemver(r.tag, current) == 0
+                        PcRow(
+                            title = "v${r.version}" + if (r.prerelease) "（预发布）" else "",
+                            summary = if (isCur) "当前已安装" else r.publishedAt.take(10),
+                            value = if (isCur) null else formatBytes(r.apkSize),
+                            onClick = if (isCur || downloading) null else {
+                                { downloadAndInstall(r) }
+                            }
+                        )
+                    }
                 }
             }
         }
 
         Spacer(Modifier.height(SpaceL))
         Text(
-            "更新从 GitHub Releases 获取。若网络不通，可点「查看发布页」手动下载安装。",
+            "下载失败会自动尝试镜像源。所有版本均可自由安装或回退，" +
+                "无需先卸载当前版本。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
 
-/** 字节数转可读文本。只用于展示，精度到 0.1 单位即可。 */
 private fun formatBytes(n: Long): String = when {
     n >= 1_048_576 -> "%.1f MB".format(n / 1_048_576.0)
     n >= 1024 -> "%.0f KB".format(n / 1024.0)

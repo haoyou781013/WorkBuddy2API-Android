@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -94,9 +95,28 @@ fun AboutScreen(context: Context, onOpenUpdate: () -> Unit) {
             )
         }
 
+        Spacer(Modifier.height(SpaceM))
+        SectionTitle(text = "使用限制")
+        AppCard {
+            Attribution.USAGE_NOTICE.forEach { line ->
+                Row {
+                    Text("· ", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+
         Spacer(Modifier.height(SpaceL))
         Text(
-            "本应用仅作为本地 API 网关使用，不隶属于任何上游服务提供方。",
+            "本应用仅作为本地 API 网关使用，不隶属于任何上游服务提供方。" +
+                "上游项目免费开源，本应用同样不作任何收费分发。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
