@@ -128,10 +128,19 @@ fun AppShell(context: Context, app: AppState) {
                     title = { Text(title) },
                     navigationIcon = {
                         if (sub != SubPage.NONE) {
+                            // 显式给 tint。
+                            //
+                            // M3Icons 里路径 fill 用的是 Color.Black 占位，靠 Material3 Icon
+                            // 默认的 LocalContentColor 重着色。容器没设 contentColor 时图标
+                            // 就保持纯黑 —— 顶栏背景若是深色，看起来就是「没有返回键」，
+                            // 但点击区域依然有效，正是用户看到的现象。
+                            //
+                            // 指定 onSurface 消除对 LocalContentColor 的依赖。
                             IconButton(onClick = { sub = SubPage.NONE }) {
                                 Icon(
                                     imageVector = M3Icons.Back,
-                                    contentDescription = "返回"
+                                    contentDescription = "返回",
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
                         }
