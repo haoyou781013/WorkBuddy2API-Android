@@ -32,6 +32,8 @@ class QoderClaim(private val personalToken: String) {
         val id: String,
         val title: String,
         val claimable: Boolean,
+        /** CLAIM_BENEFIT / VIEW_DETAILS / …，决定这条活动能不能领。 */
+        val actionType: String,
     )
 
     data class Result(
@@ -76,7 +78,8 @@ class QoderClaim(private val personalToken: String) {
         val listed = listCampaigns()
         if (!listed.ok) return listed
 
-        val claimable = listed.campaigns.filter { it.claimable }
+        // 只有 CLAIM_BENEFIT 类型的活动才真的能领。
+        val claimable = listed.campaigns.filter { it.claimable && it.actionType == "CLAIM_BENEFIT" }
         if (claimable.isEmpty()) {
             return Result(
                 true,
@@ -163,7 +166,13 @@ class QoderClaim(private val personalToken: String) {
         val out = ArrayList<Campaign>(arr.length())
         for (i in 0 until arr.length()) {
             val c = arr.optJSONObject(i) ?: continue
-            if (c.optString("actionType") != "CLAIM_BENEFIT") continue
+            // 不再在这里过滤 —— 过滤挪到调用方。
+            //
+            // 原因：活动列表里混着多种 actionType，例如
+            //   CLAIM_BENEFIT  → 领积分
+            //   VIEW_DETAILS   → 只是个展示型活动（实测 act-20260901-922）
+            // 直接 continue 掉会让用户看到「已领/不可领」，误以为今天领过了。
+            // 保留全部，由 UI 按类型显示不同状态。
             // 真实响应里没有 title / campaignName 字段（实测 2026-10-17）：
             // {"campaignId":"01a130eb-...","campaignKey":"act-20261013-462",
             //  "actionType":"CLAIM_BENEFIT","claimStatus":"CLAIMABLE",
@@ -182,6 +191,7 @@ class QoderClaim(private val personalToken: String) {
                 id = c.optString("campaignId"),
                 title = name,
                 claimable = c.optString("claimStatus") == "CLAIMABLE",
+                actionType = c.optString("actionType"),
             )
         }
         return out
@@ -289,43 +299,59 @@ class QoderClaim(private val personalToken: String) {
     /**
      * 把 quota/usage 响应整理成一行可读文本。
      *
-     * 上游字段名没有公开文档，这里**递归扫描**所有数字字段，
-     * 按 key 里是否含 total/used/remain/available/credit 归类。
-     * 比硬编码某个字段名稳，也不会因为字段缺失就整体失败。
+     * 响应结构（2026-10-17 实测）：
+     * {
+     *   "userId": "01a14973-...",
+     *   "userType": "personal_professional_trial",
+     *   "usageType": "credits",
+     *   "totalUsagePercentage": 0.0,
+     *   "isQuotaExceeded": false,
+     *   "expiresAt": 1793443277298,
+     *   "upgradeUrl": "https://qoder.com.cn/pricing?client=qoder",
+     *   "userQuota": { "total": 300.0, "used": <n> }
+     * }
+     *
+     * **total / used 在 userQuota 里面，不在顶层。** 上一版直接扫顶层
+     * 找 total 撞上了别的 0 值字段，所以显示成「总量 0」。
+     * 现在优先读 userQuota，读不到才退回顶层搜索。
      */
     private fun summarizeQuota(text: String): String? {
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
-        val pairs = LinkedHashMap<String, Double>()
 
-        fun walk(o: Any?, path: String) {
-            when (o) {
-                is JSONObject -> for (k in o.keys()) {
-                    val v = o.opt(k)
-                    val p = if (path.isEmpty()) k else "$path.$k"
-                    if (v is Number) pairs[p] = v.toDouble() else walk(v, p)
-                }
-                is org.json.JSONArray -> for (i in 0 until o.length()) walk(o.opt(i), "$path[$i]")
-            }
+        val q = json.optJSONObject("userQuota")
+        val total = q?.optDouble("total", Double.NaN)?.takeIf { !it.isNaN() }
+            ?: json.optJSONObject("data")?.optJSONObject("userQuota")?.optDouble("total", Double.NaN)?.takeIf { !it.isNaN() }
+        val used = q?.optDouble("used", Double.NaN)?.takeIf { !it.isNaN() }
+            ?: json.optJSONObject("data")?.optJSONObject("userQuota")?.optDouble("used", Double.NaN)?.takeIf { !it.isNaN() }
+
+        if (total == null && used == null) {
+            return null
         }
-        walk(json, "")
-        if (pairs.isEmpty()) return null
 
-        fun find(vararg keys: String): Pair<String, Double>? =
-            pairs.entries.firstOrNull { e ->
-                val k = e.key.lowercase()
-                keys.any { k.contains(it) }
-            }?.let { it.key to it.value }
-
-        val total = find("total")
-        val used = find("used", "consume")
-        val remain = find("remain", "available", "balance", "left")
-
+        val remain = if (total != null && used != null) total - used else null
         val sb = StringBuilder()
-        remain?.let { sb.append("剩余 ${fmt(it.second)}") }
-        if (used != null) { if (sb.isNotEmpty()) sb.append("  ·  "); sb.append("已用 ${fmt(used.second)}") }
-        if (total != null) { if (sb.isNotEmpty()) sb.append("  ·  "); sb.append("总量 ${fmt(total.second)}") }
+        remain?.let { sb.append("剩余 ${fmt(it)}") }
+        used?.let { if (sb.isNotEmpty()) sb.append("  ·  "); sb.append("已用 ${fmt(it)}") }
+        total?.let { if (sb.isNotEmpty()) sb.append("  ·  "); sb.append("总量 ${fmt(it)}") }
 
-        return if (sb.isEmpty()) null else "$sb（原始响应：${text.take(300)}）"
+        // 套餐类型和过期时间对使用者有实际意义，一并显示。
+        json.optString("userType").takeIf { it.isNotBlank() }?.let {
+            if (sb.isNotEmpty()) sb.append("\n")
+            sb.append("套餐：$it")
+        }
+        val exp = json.optLong("expiresAt", 0L)
+        if (exp > 0) {
+            val d = java.util.Date(exp)
+            val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.CHINA)
+            if (sb.isNotEmpty()) sb.append("  ·  ")
+            sb.append("到期 ${f.format(d)}")
+        }
+        if (json.optBoolean("isQuotaExceeded", false)) {
+            if (sb.isNotEmpty()) sb.append("\n")
+            sb.append("⚠️ 额度已用尽")
+        }
+
+        return sb.toString().ifBlank { null }
     }
 
     private fun fmt(d: Double): String =

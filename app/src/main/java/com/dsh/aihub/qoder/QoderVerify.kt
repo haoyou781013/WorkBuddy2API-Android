@@ -151,7 +151,18 @@ object QoderVerify {
                         lines += "  当前没有活动"
                     } else {
                         r.campaigns.forEach { c ->
-                            lines += "  · ${c.title}  ${if (c.claimable) "可领取" else "已领/不可领"}"
+                            // 状态文案要区分「能不能领」和「是不是领取型活动」。
+                            // 之前只判 claimable，把 VIEW_DETAILS 类型的展示型
+                            // 活动也显示成「可领取」，点下去什么也不会发生。
+                            val state = when {
+                                c.actionType != "CLAIM_BENEFIT" && c.claimable ->
+                                    "展示型活动（不可领）"
+                                c.actionType != "CLAIM_BENEFIT" ->
+                                    "展示型活动"
+                                c.claimable -> "可领取"
+                                else -> "今日已领"
+                            }
+                            lines += "  · ${c.title}  $state"
                         }
                     }
                 } else {
