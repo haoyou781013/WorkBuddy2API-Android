@@ -228,6 +228,13 @@ class QoderClaim(private val personalToken: String) {
             }
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("Cosy-ClientType", "10")
+            // 版本号和平台是硬性要求（CreditDaddy constants.js:80）。
+            // 之前只带 ClientType，缺 Cosy-Version / Cosy-MachineOS，
+            // 上游会直接拒绝。
+            setRequestProperty("Cosy-Version", "0.3.3")
+            setRequestProperty("Cosy-MachineOS", "android")
+            // 活动/配额接口用 Qoder，换取接口用 qodercli —— 两者不同。
+            setRequestProperty("User-Agent", "Qoder")
             setRequestProperty("Accept", "application/json")
         }
         return try {
@@ -243,27 +250,36 @@ class QoderClaim(private val personalToken: String) {
     }
 
     /**
-     * 查询当前 Credits 余额。
+     * 查询当前 Credits 用量与余额。
      *
-     * 社区实现里没有现成的余额接口，所以这里**同时试几个候选路径**，
-     * 哪个能返回数值就用哪个。这不是猜谜 —— 每个候选都来自 Qoder
-     * 其他公开接口的命名习惯，试完把命中的记下来即可。
+     * 接口来自 CreditDaddy src/constants.js：
+     *   QUOTA_USAGE_PATH = "/api/v2/quota/usage"
+     *   USERINFO_PATH    = "/api/v1/userinfo"
+     *
+     * 之前我猜过 /api/v1/me/credits、/me/quota、/me/usage、/user/status，
+     * 全是 404 —— 真实路径是 v2 且叫 quota/usage，不在 me 命名空间下。
+     *
+     * **请求头有硬性要求**（constants.js:80 buildQoderHeaders）：
+     *   Cosy-ClientType: 10
+     *   Cosy-Version:    0.3.3     ← 版本号不对会被拒
+     *   Cosy-MachineOS:  windows / macos / linux
+     *   User-Agent:      Qoder      ← 不是 qodercli，活动接口才用 qodercli
+     *   Accept:          application/json
      */
     fun queryBalance(): Result {
-        val attempts = ArrayList<String>()
-        for (path in BALANCE_PATHS) {
-            val r = runCatching {
-                ensureSession()
-                request(path, "GET")
-            }
-            r.onSuccess { text ->
-                lastBalanceRaw = text
-                val n = extractBalance(text)
-                if (n != null) return Result(true, "余额 $n Credits")
-                attempts += "  ${path.substringBefore('?')} → 未找到余额字段"
-            }.onFailure { attempts += "  ${path.substringBefore('?')} → ${it.message?.take(80)}" }
+        val r = runCatching {
+            ensureSession()
+            request(QUOTA_USAGE_PATH, "GET")
         }
-        return Result(false, "余额接口未确认：\n" + attempts.joinToString("\n"))
+        return r.fold(
+            onSuccess = { text ->
+                lastBalanceRaw = text
+                val summary = summarizeQuota(text)
+                if (summary != null) Result(true, summary)
+                else Result(true, "接口已通，但未识别出额度字段。原始响应：${text.take(400)}")
+            },
+            onFailure = { Result(false, "余额查询失败：${it.message}") },
+        )
     }
 
     /** 余额原始响应，供诊断。 */
@@ -271,48 +287,60 @@ class QoderClaim(private val personalToken: String) {
         private set
 
     /**
-     * 从各种可能的响应结构里抠出余额数字。
+     * 把 quota/usage 响应整理成一行可读文本。
      *
-     * 上游字段名未确认，所以按「名字里带 credit/balance/remain/available
-     * 且值是数字」递归找第一个命中。比硬编码某个字段名稳。
+     * 上游字段名没有公开文档，这里**递归扫描**所有数字字段，
+     * 按 key 里是否含 total/used/remain/available/credit 归类。
+     * 比硬编码某个字段名稳，也不会因为字段缺失就整体失败。
      */
-    private fun extractBalance(text: String): Int? {
+    private fun summarizeQuota(text: String): String? {
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
-        var found: Int? = null
+        val pairs = LinkedHashMap<String, Double>()
 
-        fun walk(o: Any?) {
-            if (found != null) return
+        fun walk(o: Any?, path: String) {
             when (o) {
-                is JSONObject -> {
-                    for (key in o.keys()) {
-                        val v = o.opt(key)
-                        val k = key.lowercase()
-                        if ((k.contains("credit") || k.contains("balance") ||
-                                k.contains("remain") || k.contains("available")) &&
-                            v is Number
-                        ) {
-                            found = v.toInt(); return
-                        }
-                        walk(v)
-                    }
+                is JSONObject -> for (k in o.keys()) {
+                    val v = o.opt(k)
+                    val p = if (path.isEmpty()) k else "$path.$k"
+                    if (v is Number) pairs[p] = v.toDouble() else walk(v, p)
                 }
-                is org.json.JSONArray -> for (i in 0 until o.length()) walk(o.opt(i))
+                is org.json.JSONArray -> for (i in 0 until o.length()) walk(o.opt(i), "$path[$i]")
             }
         }
-        walk(json)
-        return found
+        walk(json, "")
+        if (pairs.isEmpty()) return null
+
+        fun find(vararg keys: String): Pair<String, Double>? =
+            pairs.entries.firstOrNull { e ->
+                val k = e.key.lowercase()
+                keys.any { k.contains(it) }
+            }?.let { it.key to it.value }
+
+        val total = find("total")
+        val used = find("used", "consume")
+        val remain = find("remain", "available", "balance", "left")
+
+        val sb = StringBuilder()
+        remain?.let { sb.append("剩余 ${fmt(it.second)}") }
+        if (used != null) { if (sb.isNotEmpty()) sb.append("  ·  "); sb.append("已用 ${fmt(used.second)}") }
+        if (total != null) { if (sb.isNotEmpty()) sb.append("  ·  "); sb.append("总量 ${fmt(total.second)}") }
+
+        return if (sb.isEmpty()) null else "$sb（原始响应：${text.take(300)}）"
     }
+
+    private fun fmt(d: Double): String =
+        if (d == d.toLong().toDouble()) d.toLong().toString() else String.format("%.1f", d)
 
     private fun host(): String = baseActive.removePrefix("https://").substringBefore('/')
 
     private companion object {
-        /** 余额候选路径。命中后可以只留一个，这里先全试。 */
-        val BALANCE_PATHS = listOf(
-            "/sash/api/v1/me/credits",
-            "/sash/api/v1/me/quota",
-            "/sash/api/v1/me/usage",
-            "/api/v1/me/credits",
-            "/api/v1/user/status",
-        )
+        /**
+         * 配额查询路径。来自 CreditDaddy src/constants.js:29
+         * `QUOTA_USAGE_PATH = '/api/v2/quota/usage'`。
+         *
+         * 注意是 v2，而且不在 me 命名空间下 —— 这是之前连试五个
+         * me 命名空间全部 404 的原因。
+         */
+        const val QUOTA_USAGE_PATH = "/api/v2/quota/usage"
     }
 }

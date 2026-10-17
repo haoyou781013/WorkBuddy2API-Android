@@ -93,8 +93,8 @@ android {
         targetSdk = 36
         // 版本号随功能变更递增：便于在设备上区分"是否装上的是新版"
         // （同 versionCode 覆盖安装后，界面上无从判断装的是哪一版）。
-        versionCode = 28
-        versionName = "1.8.0"
+        versionCode = 29
+        versionName = "1.8.1"
     }
 
     buildTypes {
