@@ -43,7 +43,15 @@ class QoderClaim(private val personalToken: String) {
 
     /** 已换到的会话 token。一次流程内复用，避免每个请求都换。 */
     private var sessionToken: String? = null
-    private var baseActive: String = BASE_CN
+    // 签到只走 openapi.qoder.com.cn。
+    //
+    // 之前写成 BASE_CN（gateway.qoder.com.cn），那是 COSY 签名链路用的域名，
+    // 拿它去调 /api/v1/jobToken/exchange 会被阿里云 ALB 直接挡掉返回 503
+    // HTML —— 因为它不是同一个服务，路径存在但后端不认。
+    //
+    // 社区实现（NoName4Me/mac-daily-credits:483）明确用的是
+    // `https://openapi.qoder.com.cn`。
+    private var baseActive: String = BASE_CN_OPENAPI
 
     /**
      * 拉取活动列表。

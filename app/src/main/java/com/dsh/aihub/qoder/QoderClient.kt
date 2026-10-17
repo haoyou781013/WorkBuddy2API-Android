@@ -30,6 +30,12 @@ internal const val BASE_INTL = "https://api.qoder.com"
 internal const val BASE_INTL_OPENAPI = "https://openapi.qoder.sh"
 internal const val BASE_CN = "https://gateway.qoder.com.cn"
 
+// 签到（campaigns）专用域名。和 gateway 不是同一个服务：
+//   gateway.qoder.com.cn     → COSY 签名链路，处理 /algo/api/v3/*
+//   openapi.qoder.com.cn     → 开放接口，处理 /api/v1/jobToken/exchange 和 /sash/*
+// 把签到请求发到 gateway 会被阿里云 ALB 挡掉，返回 503 HTML。
+internal const val BASE_CN_OPENAPI = "https://openapi.qoder.com.cn"
+
 class QoderClient(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("qoder", Context.MODE_PRIVATE)
