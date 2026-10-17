@@ -1,5 +1,8 @@
 package com.dsh.aihub.ui
 
+import com.dsh.aihub.qoder.QoderClient
+import com.dsh.aihub.qoder.QoderChat
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.OutlinedButton
@@ -53,6 +56,10 @@ fun QoderScreen() {
     var claimResult by remember { mutableStateOf<String?>(null) }
     var reportText by remember { mutableStateOf<String?>(null) }
     var querying by remember { mutableStateOf(false) }
+    var chatModel by remember { mutableStateOf("auto") }
+    var chatPrompt by remember { mutableStateOf("用一句话说明你是谁") }
+    var chatReply by remember { mutableStateOf<String?>(null) }
+    var chatting by remember { mutableStateOf(false) }
     var ok by remember { mutableStateOf(false) }
 
     Column(
@@ -251,6 +258,77 @@ fun QoderScreen() {
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("复制完整报告") }
+            }
+        }
+
+        // ---- 对话测试 ----
+        Spacer(Modifier.height(PcTokens.SpaceL))
+        PcCard(title = "对话测试") {
+            Text(
+                "用上面的 PAT 换 jobToken，再走 COSY 签名链路发一条真实对话。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(PcTokens.SpaceS))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                QoderChat.MODELS.forEach { (id, label) ->
+                    val sel = id == chatModel
+                    if (sel) {
+                        Button(onClick = { chatModel = id }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                            Text(label, style = MaterialTheme.typography.labelSmall)
+                        }
+                    } else {
+                        OutlinedButton(onClick = { chatModel = id }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                            Text(label, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(PcTokens.SpaceS))
+            OutlinedTextField(
+                value = chatPrompt,
+                onValueChange = { chatPrompt = it },
+                label = { Text("要问什么") },
+                maxLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(PcTokens.SpaceS))
+            Button(
+                onClick = {
+                    chatting = true
+                    chatReply = ""
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val jt = QoderClient(context).exchangeJobToken(pat)
+                                val sb = StringBuilder()
+                                QoderChat(jt).chat(chatModel, listOf(QoderChat.Message("user", chatPrompt))) { d ->
+                                    sb.append(d)
+                                    // 每次增量都在主线程刷新，让用户看到字在流
+                                    scope.launch { chatReply = sb.toString() }
+                                }
+                                sb.toString()
+                            }
+                        }
+                        chatReply = r.fold(
+                            onSuccess = { it.ifBlank { "（上游返回空内容）" } },
+                            onFailure = { "✗ ${it.message}" },
+                        )
+                        chatting = false
+                    }
+                },
+                enabled = !chatting && pat.isNotBlank() && chatPrompt.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (chatting) "生成中…" else "发送") }
+
+            chatReply?.takeIf { it.isNotEmpty() }?.let {
+                Spacer(Modifier.height(PcTokens.SpaceS))
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }

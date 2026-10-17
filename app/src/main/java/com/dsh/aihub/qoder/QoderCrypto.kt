@@ -165,4 +165,76 @@ XcW+ML9FoCI6AOvOzwIDAQAB
         cipher.init(Cipher.ENCRYPT_MODE, keySpec, IvParameterSpec(key.copyOfRange(0, 16)))
         return cipher.doFinal(plain)
     }
+
+    // ---------------------------------------------------------------- 聊天链路
+
+    /**
+     * 构造 COSY bearer 的 payload 段。
+     *
+     * 格式（cli2api internal/providers/qoder/cosy.go:281 payloadB64）：
+     *   字段按 key 字母序压成紧凑 JSON → 标准 base64（不是自定义表！）
+     *
+     *   {"cosyVersion":..,"ideVersion":"","info":"<jobToken 的 info>",
+     *    "requestId":"<uuid>","version":"v1"}
+     *
+     * 注意：这里用 **标准 base64**，和签到的自定义字母表编码不同。
+     * 两套编码并存是 Qoder 协议里容易搞混的地方。
+     */
+    fun payloadB64(info: String, requestId: String): String {
+        // 按字母序拼紧凑 JSON，不依赖 JSONObject 的迭代顺序。
+        val json = "{\"cosyVersion\":\"$COSY_VERSION\"," +
+            "\"ideVersion\":\"\"," +
+            "\"info\":${quote(info)}," +
+            "\"requestId\":${quote(requestId)}," +
+            "\"version\":\"v1\"}"
+        return android.util.Base64.encodeToString(
+            json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP
+        )
+    }
+
+    /**
+     * 计算 COSY bearer：`Bearer COSY.<payload>.<md5hex>`。
+     *
+     * 签名串（cosy.go:161）：
+     *   raw = payload + "\n" + cosyKey + "\n" + date + "\n" + body + "\n" + path
+     *   sum = MD5(raw)
+     *
+     * path 要剥掉前导 `/algo`（cosySignPath 做的事），否则签名对不上。
+     */
+    fun cosyBearer(
+        payload: String,
+        cosyKey: String,
+        date: String,
+        body: String,
+        path: String,
+    ): String {
+        val raw = payload + "\n" + cosyKey + "\n" + date + "\n" + body + "\n" + path
+        val md = java.security.MessageDigest.getInstance("MD5")
+        val sum = md.digest(raw.toByteArray(Charsets.UTF_8))
+        val hex = sum.joinToString("") { "%02x".format(it) }
+        return "Bearer COSY.$payload.$hex"
+    }
+
+    /** 签名用的 path：去掉前导 /algo。 */
+    fun cosySignPath(fullUrl: String): String {
+        val path = runCatching { java.net.URI(fullUrl).path }.getOrNull() ?: "/"
+        val trimmed = if (path.startsWith("/algo")) path.removePrefix("/algo") else path
+        return trimmed.ifEmpty { "/" }
+    }
+
+    /** JSON 字符串安全引用。 */
+    private fun quote(v: String): String {
+        val sb = StringBuilder("\"")
+        for (c in v) when (c) {
+            '"' -> sb.append("\\\"")
+            '\\' -> sb.append("\\\\")
+            '\n' -> sb.append("\\n")
+            '\r' -> sb.append("\\r")
+            '\t' -> sb.append("\\t")
+            else -> if (c < ' ') sb.append(String.format("\\u%04x", c.code)) else sb.append(c)
+        }
+        return sb.append('"').toString()
+    }
+
+    internal const val COSY_VERSION = "1.1.32"
 }
