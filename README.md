@@ -1,25 +1,81 @@
-# WorkBuddy2API · Android 原生版
+# AIHub
 
-[![Build APK](https://github.com/jilin0105/WorkBuddy2API-Android/actions/workflows/build.yml/badge.svg)](https://github.com/jilin0105/WorkBuddy2API-Android/actions/workflows/build.yml)
+[![Build Check](https://github.com/haoyou781013/WorkBuddy2API-Android/actions/workflows/build.yml/badge.svg)](https://github.com/haoyou781013/WorkBuddy2API-Android/actions/workflows/build.yml)
 
 > 把腾讯 **WorkBuddy / CodeBuddy** 的积分额度，变成手机本地一个标准的 **OpenAI / Anthropic 兼容 API**。
 > 纯原生 Android 实现（Kotlin），**无需 Python、无需 Docker、无需电脑**——装到手机上就能跑。
+
+## 仓库地址
+
+| 平台 | 地址 | 用途 |
+|---|---|---|
+| GitHub | https://github.com/haoyou781013/WorkBuddy2API-Android | 主仓库 · 发布 Release |
+| Gitee | https://gitee.com/haoyou781/aihub | 镜像（不含 Release 附件） |
+
+## 来源与授权
+
+本项目派生自 **[jilin0105/WorkBuddy2API-Android](https://github.com/jilin0105/WorkBuddy2API-Android)**（MIT），
+后者又参考了以下 Python 实现：
+
+- [wicm84266964/Buddy2api](https://github.com/wicm84266964/Buddy2api)
+- [ShouZhuo0413/codebuddy2api](https://github.com/ShouZhuo0413/codebuddy2api)
+- [hawklithm/workbuddy2api](https://github.com/hawklithm/workbuddy2api)
+
+### ⚠️ 使用限制（优先遵从原项目要求）
+
+> **本项目仅供学习与技术研究使用，请勿用于任何商业用途。**
+
+原项目 README 明确要求，本派生版本一并继承：
+
+- 仅用于学习 API 网关原理、协议适配、Android 原生开发等技术
+- **禁止**用于商业用途、生产环境、批量调用、代理转售，或任何违反
+  WorkBuddy / CodeBuddy 服务条款的行为
+- 禁止批量注册小号 / 收购账号对外提供付费 API、共享池、代充
+- 禁止二次加壳、捆绑卡密售卖，或以「公益服」「低价中转」等名义变相收费分发
+- 使用者须自行遵守上游服务条款，**自行承担全部使用风险**
+
+约束优先级：**原项目要求 > 上游使用声明 > 开源协议（MIT） > 本项目约定**。
+详见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+
+本项目以**个人免费使用、不商用、不上架应用商店**为前提。
 
 ---
 
 ## 直接下载
 
-每次推送到 `main` 都会自动构建 APK，滚动更新到同一个 Release：
+**👉 [最新正式版](https://github.com/haoyou781013/WorkBuddy2API-Android/releases/latest)**
 
-**👉 [下载最新构建 APK](https://github.com/jilin0105/WorkBuddy2API-Android/releases/tag/latest-build)**
+### 测试版与正式版
 
-- APK 使用 **debug 签名**（本仓库为本地自用工具，不发布应用商店）
-- 安装前请先卸载设备上的旧版本，或确认签名一致
-- 也可在 [Actions](https://github.com/jilin0105/WorkBuddy2API-Android/actions) 页面下载任意一次构建的产物（保留 14 天）
+| 通道 | 标记 | 版本号 | 客户端默认可见 |
+|---|---|---|---|
+| 正式版 | `prerelease: false` | `v1.2.0` | ✅ |
+| 测试版 | `prerelease: true` | `v1.2.0-beta.1` | ❌ 需手动开启 |
 
-> 说明：上方只保留 GitHub 自带的构建状态徽章。
-> 先前使用过第三方 shields.io 版本徽章，但该域名在部分网络环境下无法加载，
-> 会显示成"图片加载失败"，因此已移除 —— 最新版本请直接看上面的 Release 链接。
+应用内「软件更新」默认只提示正式版。想试测试版，在那里打开「接收测试版」开关。
+
+版本号遵循 SemVer，预发布段低于同号正式版 —— `v1.2.0-beta.1` < `v1.2.0`，
+所以正式版发布后，装了 beta 的用户会自动收到升级提示。
+
+### 签名
+
+APK 使用**固定的 release keystore**签名，可跨版本覆盖安装。
+
+> 本仓库为本地自用工具，不上架任何应用商店。
+
+⚠️ v1.0.0 ~ v1.1.1 用的是 CI 的 debug 签名（每次构建都不同），
+与 **v1.2.0 起**的固定签名不兼容。从更早版本升级到 v1.2.0 需要
+**先卸载再安装**（一次性代价），此后即可直接覆盖更新。
+
+### 构建
+
+本项目**本地构建并签名**，CI 只做编译检查（`compileDebugKotlin` +
+`compileReleaseKotlin`），不产出 APK —— 签名密钥不进仓库，
+也不上传到任何云端。
+
+```bash
+/opt/android-sdk/build.sh release
+```
 
 ---
 
