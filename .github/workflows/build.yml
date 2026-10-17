@@ -1,17 +1,26 @@
-name: Build APK
+# 编译检查（不发布 APK）
+#
+# 为什么 CI 不产出可安装的 APK：
+#   APK 必须用固定的 release keystore 签名，否则与已安装版本签名冲突、
+#   无法覆盖安装。密钥材料不进仓库，而 CI 若要从 Secrets 取，
+#   等于把签名权搬上云端；本项目是个人自用工具，
+#   构建与签名都留在本机更简单也更好审计。
+#
+# 因此 CI 只负责一件事：确认 main 分支能编译通过，
+# 防止把编译错误留到发版时才发现。
+#
+# 正式构建与发布走本地：/opt/android-sdk/build.sh release
+
+name: Build Check
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: '发布 tag（留空只构建 artifact）'
-        required: false
-        default: ''
 
+# 只读权限：这个 workflow 不写任何东西
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -25,68 +34,29 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 不用 android-actions/setup-android@v3：该 action 内部会执行
-      # `sdkmanager tools`，而新版 cmdline-tools 16.0 已不再提供名为 tools 的包，
-      # 于是它以 exit code 1 直接失败（日志：Warning: Failed to find package 'tools'）。
-      # 这是该 action 与 cmdline-tools 版本不匹配导致的问题，与我们的工程无关。
-      #
-      # ubuntu-latest 镜像本身已预装 Android SDK（/usr/local/lib/android/sdk），
-      # 直接沿用预装环境，只补装我们需要的 platform 与 build-tools。
       - name: Install SDK Platform 37
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKM" ]; then
-            SDKM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM=""
+          for c in "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+                   "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager; do
+            [ -x "$c" ] && SDKM="$c" && break
+          done
+          if [ -z "$SDKM" ]; then
+            echo "::error::sdkmanager not found"
+            exit 1
           fi
-          echo "sdkmanager: $SDKM"
-          "$SDKM" --version || true
-
-          # 本项目 compileSdk 用的是带小版本号的 android-37.0（AGP 8.13 的新命名格式），
-          # 先按这个名字装；若镜像源还没同步，回退到不带小版本号的 android-37。
-          # 先接受全部许可，否则 sdkmanager 会卡在交互提示上直到 job 超时。
           yes | "$SDKM" --licenses > /dev/null 2>&1 || true
           "$SDKM" --install "platforms;android-37.0" "build-tools;36.0.0" \
             || "$SDKM" --install "platforms;android-37" "build-tools;36.0.0"
-          echo "== 已安装 platforms =="
-          ls "$ANDROID_HOME/platforms" || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Grant execute permission
-        run: chmod +x gradlew || true
+        run: chmod +x gradlew
 
-      - name: Show environment
-        run: |
-          echo "== Java =="; java -version
-          echo "== SDK =="; echo "$ANDROID_HOME"; ls "$ANDROID_HOME/platforms" || true
-          echo "== compileSdk in build.gradle.kts =="
-          grep -nE 'compileSdk|minSdk|targetSdk' app/build.gradle.kts || true
-
-      - name: Build release APK
-        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
-
-      - name: Build debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
-
-      - name: Collect APKs
-        run: |
-          mkdir -p out
-          find app/build/outputs/apk -name '*.apk' -exec cp {} out/ \;
-          ls -la out/
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk
-          path: out/*.apk
-
-      - name: Create Release
-        if: github.event.inputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          files: out/*.apk
+      # 只编译，不出包。assemble 会走签名流程，而 release keystore
+      # 不在 CI 里，产出的包反而会误导使用者。
+      - name: Compile check
+        run: ./gradlew :app:compileDebugKotlin :app:compileReleaseKotlin --stacktrace

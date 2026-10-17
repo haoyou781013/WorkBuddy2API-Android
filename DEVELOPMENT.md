@@ -135,7 +135,42 @@ curl -X POST .../releases -d '{"tag_name":"v1.2.0","prerelease":false,...}'
 - 不引入体积大的依赖；图标用内联 `ImageVector`，不引入 `material-icons-extended`
 - `NavCompat.kt` 必须保留（Compose Dialog 的 dispatcher 查找缺陷，与 UI 库无关）
 
-## 四、构建
+## 四、构建与签名
+
+### 4.1 签名必须固定（血泪教训）
+
+**必须用固定的 release keystore，不能用 debug 签名。**
+
+第 1 版用了 `signingConfig = debug`，结果：debug keystore 由构建机自动生成，
+本机与 CI 生成的是不同证书（`d43e6bb1...` vs `71841537...`），
+系统判定为不同应用 → **更新时报「签名冲突」拒绝覆盖安装**。
+
+本项目的确不上架商店，但**应用内更新必须能覆盖安装**，
+所以签名必须跨构建、跨机器稳定。
+
+- keystore：`/root/keys/aihub-release.jks`（别名 `aihub`，RSA 4096，有效期至 2054）
+- 证书 SHA-256：`03:B8:5B:8F:C1:BB:DE:FF:33:4A:D1:41:D2:3F:F8:F5:7D:DA:0D:25:01:3F:E5:89:BB:3E:1F:8B:7F:02:FB:1D`
+- 配置文件：`~/.android/aihub-signing.properties`（mode 600，已在 .gitignore）
+- 备份：`/root/keys/backup/`，另有加密包 `/tmp/aihub-signing-backup.tar.gz.enc`
+  （口令同 storePassword）
+
+构建脚本按此优先级读取签名材料：
+1. 环境变量 `AIHUB_STORE_FILE` / `AIHUB_STORE_PASSWORD` / `AIHUB_KEY_ALIAS` / `AIHUB_KEY_PASSWORD`
+2. `~/.android/aihub-signing.properties`
+3. 都没有 → 退回 debug 签名，并在构建时打 WARNING（**产物不可用于发布**）
+
+> ⚠️ **密钥丢失 = 永远无法发布能覆盖安装的更新。** 只能让用户卸载重装。
+
+### 4.2 CI 只做编译检查，不产出 APK
+
+`.github/workflows/build.yml` 只跑 `compileDebugKotlin` + `compileReleaseKotlin`，
+权限为 `contents: read`。
+
+原因：APK 必须用上面的固定 keystore 签名。若 CI 从 Secrets 取密钥，
+等于把签名权搬上云端；本项目是个人自用工具，构建与签名都留在本机
+更简单、更好审计。CI 的价值只剩「别把编译错误留到发版时」这一件事。
+
+### 4.3 本地构建
 
 本机 proot 可直接编译，不依赖 GitHub Actions：
 
@@ -148,5 +183,7 @@ curl -X POST .../releases -d '{"tag_name":"v1.2.0","prerelease":false,...}'
 
 ## 五、已知限制
 
-- Release APK 目前使用 debug 签名（未配 keystore），**不可正式分发**
 - 保活修复依赖用户手动授权「电池优化白名单」，未经真机长期验证
+- 签名已改为固定 keystore；但 v1.0.0 ~ v1.1.1 是 CI 的 debug 签名，
+  **无法用新签名覆盖安装，必须卸载重装一次**（一次性代价）
+- 应用内更新需手动开启「接收测试版」才能看到预发布版本

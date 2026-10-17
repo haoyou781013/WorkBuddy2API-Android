@@ -1,10 +1,66 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+/**
+ * 读取 release 签名材料。返回 null 表示未配置。
+ *
+ * 来源优先级：
+ *   ① 环境变量 AIHUB_STORE_FILE / AIHUB_STORE_PASSWORD / AIHUB_KEY_ALIAS / AIHUB_KEY_PASSWORD
+ *      （CI 从 GitHub Secrets 注入，密钥材料不落仓库）
+ *   ② ~/.android/aihub-signing.properties（本地开发，同样不进版本控制）
+ *   ③ 都没有 → null，调用方退回 debug 签名
+ */
+fun releaseSigning(): Map<String, String>? {
+    fun env(k: String) = System.getenv(k)?.takeIf { it.isNotBlank() }
+
+    val envFile = env("AIHUB_STORE_FILE")
+    if (envFile != null) {
+        return mapOf(
+            "storeFile" to envFile,
+            "storePassword" to (env("AIHUB_STORE_PASSWORD") ?: return null),
+            "keyAlias" to (env("AIHUB_KEY_ALIAS") ?: "aihub"),
+            "keyPassword" to (env("AIHUB_KEY_PASSWORD") ?: env("AIHUB_STORE_PASSWORD")!!),
+        )
+    }
+
+    val propFile = File(System.getProperty("user.home"), ".android/aihub-signing.properties")
+    if (propFile.isFile) {
+        val props = Properties()
+        propFile.inputStream().use { props.load(it) }
+        val f = props.getProperty("storeFile") ?: return null
+        return mapOf(
+            "storeFile" to f,
+            "storePassword" to (props.getProperty("storePassword") ?: return null),
+            "keyAlias" to (props.getProperty("keyAlias") ?: "aihub"),
+            "keyPassword" to (props.getProperty("keyPassword") ?: props.getProperty("storePassword")!!),
+        )
+    }
+    return null
+}
+
+fun hasReleaseSigning(): Boolean = releaseSigning() != null
+
 android {
+    signingConfigs {
+        create("release") {
+            releaseSigning()?.let { c ->
+                storeFile = File(c.getValue("storeFile"))
+                storePassword = c.getValue("storePassword")
+                keyAlias = c.getValue("keyAlias")
+                keyPassword = c.getValue("keyPassword")
+            }
+            // 关掉 v1 签名：minSdk 24 起系统一律走 v2/v3，
+            // 保留 v1 只会增加 jar 校验开销，且与部分增量安装器兼容性差。
+            enableV1Signing = false
+            enableV2Signing = true
+        }
+    }
+
     namespace = "com.dsh.aihub"
 
     /**
@@ -32,8 +88,8 @@ android {
         targetSdk = 36
         // 版本号随功能变更递增：便于在设备上区分"是否装上的是新版"
         // （同 versionCode 覆盖安装后，界面上无从判断装的是哪一版）。
-        versionCode = 4
-        versionName = "1.2.0-beta.1"
+        versionCode = 5
+        versionName = "1.2.0"
     }
 
     buildTypes {
@@ -41,11 +97,26 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // 复用 debug 签名，让 assembleRelease 直接产出可安装的 APK。
-            // 本项目是本地自用网关，不发布到任何商店，用 debug key 签 release 变体
-            // 只是为了「R8 压缩后的产物能装到手机上实测」这一件事；
-            // 若将来要正式发布，这里必须换成独立 release keystore。
-            signingConfig = signingConfigs.getByName("debug")
+            // 必须用**固定**的 release keystore，不能用 debug 签名。
+            //
+            // 为什么：debug keystore 是每台机器/每次重建自动生成的，
+            // 同一份源码在不同环境构建出的证书不同 —— 系统判定为不同应用，
+            // 更新时直接报「签名冲突」拒绝覆盖安装。
+            // 本项目确实不上架商店，但**应用内更新必须能覆盖安装**，
+            // 所以签名必须跨构建、跨机器稳定。
+            //
+            // 密钥材料不进仓库：优先读环境变量（CI 用 secrets），
+            // 其次读本地 ~/.android/aihub-signing.properties。
+            // 两者都没有时退回 debug 签名，仅用于本地临时验证。
+            signingConfig = signingConfigs.getByName(
+                if (hasReleaseSigning()) "release" else "debug"
+            )
+            if (!hasReleaseSigning()) {
+                logger.warn(
+                    "WARNING: release keystore 未配置，本次使用 debug 签名。" +
+                        "该 APK 无法覆盖已安装的正式版本，仅限本地临时验证。"
+                )
+            }
         }
     }
 
