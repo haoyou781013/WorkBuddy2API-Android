@@ -50,6 +50,10 @@ object KeepAliveGuide {
             Step("autostart", "允许自启动", "设置 → 应用 → 自启动管理（或 手机管家 → 权限隐私 → 自启动）"),
             Step("background", "允许后台运行", "设置 → 应用 → 应用管理 → 本应用 → 耗电管理 → 允许后台运行"),
             Step("battery", "耗电管理设为「不限制」", "设置 → 应用 → 本应用 → 耗电管理 → 允许完全后台行为"),
+                // ColorOS 有一个独立于电池优化的「应用冻结/深度睡眠」，它不看
+                // appops 和电池白名单，自己维护名单 —— 不关它，前台服务照样被杀。
+                // 这正是「连正在用的 App 都被杀掉」的真正原因。
+                Step("freeze", "关闭应用冻结（关键）", "设置 → 电池 → 更多设置 → 睡眠模式 → 关闭；或在 应用管理 → 本应用 → 耗电管理 关闭「智能省电」与「深度睡眠」"),
             Step("lock", "在最近任务中加锁", "打开最近任务 → 下拉本应用卡片 → 点锁图标固定，避免一键清理时被清掉"),
             Step("battery_optimization", "忽略电池优化", "设置 → 电池 → 更多设置 → 电池优化 → 本应用 → 不优化")
         )
@@ -121,6 +125,25 @@ object KeepAliveGuide {
             "battery" -> when (vendor()) {
                 "coloros" -> listOf(
                     "com.oplus.battery/com.oplus.powermanager.fuelgaue.PowerUsageModelActivity",
+                    "com.coloros.oppoguardelf/com.coloros.powermanager.fuelgaue.PowerUsageModelActivity"
+                )
+                "miui" -> listOf("com.miui.powerkeeper/com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
+                else -> emptyList()
+            }
+            "freeze" -> when (vendor()) {
+                // ColorOS 的睡眠模式/应用冻结入口分散在多个包里，由新到旧逐个尝试。
+                // 注意：这些 component 名随 ROM 版本变化，全部失败会回落应用详情页。
+                "coloros" -> listOf(
+                    "com.oplus.battery/com.oplus.settings.OplusSleepModeActivity",
+                    "com.oplus.battery/com.oplus.powermanager.ui.freeze.FreezeAppListActivity",
+                    "com.coloros.oppoguardelf/com.coloros.powermanager.ui.freeze.FreezeAppListActivity"
+                )
+                else -> emptyList()
+            }
+            // 此前 battery_optimization 没有跳转分支，点下去只会回落到应用详情页。
+            "battery_optimization" -> when (vendor()) {
+                "coloros" -> listOf(
+                    "com.oplus.battery/com.oplus.powermanager.fuelgaue.PowerConsumptionActivity",
                     "com.coloros.oppoguardelf/com.coloros.powermanager.fuelgaue.PowerUsageModelActivity"
                 )
                 "miui" -> listOf("com.miui.powerkeeper/com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
