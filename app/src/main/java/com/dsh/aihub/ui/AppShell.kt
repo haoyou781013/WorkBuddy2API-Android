@@ -23,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.dsh.aihub.m3.AppM3Theme
 import com.dsh.aihub.m3.M3Icons
+import com.dsh.aihub.UpdateScreen
+import com.dsh.aihub.AboutScreen
 
 /**
  * 应用外壳 —— 全 App 唯一的页面容器与导航（Material 3 版）。
@@ -63,7 +65,7 @@ enum class AppTab(val label: String, val icon: ImageVector) {
 //   脱离 Miuix 后该依赖也随之消失。内联 7 个 ImageVector 是零成本的确定解。
 
 /** 二级页面（覆盖在 Tab 之上，带返回按钮）。 */
-enum class SubPage { NONE, USAGE, INSPECTOR, STORAGE, KEEPALIVE, PROMPT, RECORDS, SCHEDULE }
+enum class SubPage { NONE, USAGE, INSPECTOR, STORAGE, KEEPALIVE, PROMPT, RECORDS, SCHEDULE, UPDATE, ABOUT }
 
 /** 二级页标题映射，避免在 TopAppBar 里写 when 分支。 */
 private fun SubPage.title(): String = when (this) {
@@ -74,6 +76,8 @@ private fun SubPage.title(): String = when (this) {
     SubPage.PROMPT -> "提示词注入"
     SubPage.RECORDS -> "调用记录"
     SubPage.SCHEDULE -> "定时参数"
+    SubPage.UPDATE -> "软件更新"
+    SubPage.ABOUT -> "关于"
     SubPage.NONE -> ""
 }
 
@@ -141,6 +145,8 @@ fun AppShell(context: Context, app: AppState) {
                         SubPage.PROMPT -> PromptScreen(context)
                         SubPage.RECORDS -> RecordsScreen(context, app)
                         SubPage.SCHEDULE -> ScheduleScreen(context, app)
+                        SubPage.UPDATE -> UpdateScreen(context)
+                        SubPage.ABOUT -> AboutScreen(context) { sub = SubPage.UPDATE }
                         SubPage.NONE -> Unit
                     }
                 } else {

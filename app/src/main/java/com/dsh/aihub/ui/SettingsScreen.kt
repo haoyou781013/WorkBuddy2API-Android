@@ -117,6 +117,21 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                         "0.0.0.0:8788（本机与局域网）"
                     else "127.0.0.1:8788（仅本机）"
                 )
+                // 更新入口放在「关于」而非独立 Tab：更新是低频操作，
+                // 占一个底部导航位会稀释主功能入口的权重。
+                // 用 PcRow（支持 onClick）而不是 PcInfoRow（纯展示）。
+                PcRow(
+                    title = "软件更新",
+                    summary = "检查并安装新版本",
+                    value = installedVersion(context),
+                    onClick = { onOpenSub(SubPage.UPDATE) }
+                )
+                // 关于页承载 MIT 协议要求的原始项目署名，以及参考实现列表
+                PcRow(
+                    title = "关于",
+                    summary = "版本、来源、开源协议",
+                    onClick = { onOpenSub(SubPage.ABOUT) }
+                )
             }
         }
     }

@@ -32,8 +32,8 @@ android {
         targetSdk = 36
         // 版本号随功能变更递增：便于在设备上区分"是否装上的是新版"
         // （同 versionCode 覆盖安装后，界面上无从判断装的是哪一版）。
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildTypes {
@@ -116,6 +116,9 @@ dependencies {
 
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // FileProvider（应用内更新把 APK 交给安装器需要 content:// URI）。
+    // 虽然 appcompat 会传递引入 androidx.core，但显式声明避免上游换实现后编译断裂。
+    implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 

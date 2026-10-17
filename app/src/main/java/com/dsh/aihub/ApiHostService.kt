@@ -87,6 +87,7 @@ class ApiHostService : Service() {
                 Log.w(TAG, "exact alarm not permitted; watchdog falls back to inexact (may be delayed in Doze)")
                 am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi)
             }
+            lastWatchdogArmAt = SystemClock.elapsedRealtime()
             Log.i(TAG, "watchdog scheduled in ${WATCHDOG_INTERVAL_MS / 60_000} min (exact=$canExact)")
         }.onFailure { Log.w(TAG, "watchdog schedule failed", it) }
     }
@@ -181,6 +182,9 @@ class ApiHostService : Service() {
         }.onFailure { Log.w(TAG, "foreground ensure failed", it) }
         // 每次进入都续期看门狗，防止闹钟一次性触发后再无兜底。
         scheduleWatchdog()
+        // 记录本次启动时刻：maintenance tick 用它与当前时间比较，
+        // 判断"闹钟是否已经错过"（Doze 期间闹钟可能被丢弃而不触发）。
+        lastWatchdogArmAt = SystemClock.elapsedRealtime()
         return START_STICKY
     }
 
@@ -732,6 +736,16 @@ class ApiHostService : Service() {
             // 就是确保唤醒锁重新持有——系统在冻结/回收时可能释放 wakelock，丢失即再次暴露在
             // Cached App Freezer 之下，60 秒内必须补上。带超时的锁过期后 isHeld 变 false，这里自动续期。
             acquireWakeLock()
+            // 看门狗补种：Doze 下 AlarmManager 的闹钟可能被直接丢弃（而不是延后）。
+            // 一旦丢弃，进程被杀后就再没有东西能把它拉起来——这是"用一段时间后
+            // 彻底调不通"的根因之一。这里每分钟核对一次上钟时刻，超过一个周期
+            // 仍未重新上钟就补上。成本极低（一次 AlarmManager 调用），收益是把
+            // 闹钟链从"单发"变成"自愈"。
+            val armAge = SystemClock.elapsedRealtime() - lastWatchdogArmAt
+            if (lastWatchdogArmAt == 0L || armAge > WATCHDOG_INTERVAL_MS) {
+                Log.i(TAG, "watchdog arm stale (age=${armAge / 60_000}min), re-arming")
+                scheduleWatchdog()
+            }
             val settings = NativeCore.settings(this)
             runAutomaticCheckin(settings)
             runAutomaticCredits(settings)
@@ -993,6 +1007,15 @@ class ApiHostService : Service() {
         /** cache 类目录超过此值才清理 WebView 缓存，避免每天无谓地扫描+清理。 */
         private const val WEBVIEW_CACHE_CLEAN_THRESHOLD = 8L * 1024 * 1024
         private const val WATCHDOG_REQUEST = 8789
+        /**
+         * 上次给看门狗上闹钟的时刻（elapsedRealtime）。
+         *
+         * 为什么需要它：Doze 下 setExactAndAllowWhileIdle 的闹钟可能被系统丢弃而不是
+         * 延后触发。表现为"服务明明还在跑，但看门狗再也不响了"——此时若进程随后被
+         * 杀，就再没有任何东西把它拉起来。maintenance tick 每分钟检查一次这个时间戳，
+         * 一旦发现超过一个周期还没重新上钟，就地补上。
+         */
+        @Volatile private var lastWatchdogArmAt = 0L
         @Volatile var running = false
 
         /** 用户意图：true = 用户希望服务处于运行状态。

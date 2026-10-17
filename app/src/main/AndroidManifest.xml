@@ -69,5 +69,21 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+        <!--
+            FileProvider：供应用内更新把下载好的 APK 交给系统安装器。
+            Android 7 起 file:// URI 会被 StrictMode 拦截，必须用 content:// 授权。
+            只暴露 res/xml/file_paths.xml 中声明的 updates 子目录。
+            exported=false + grantUriPermissions：仅本应用能发起，且只能临时授权
+            给收到 Intent 的安装器，其他应用无法枚举或读取。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

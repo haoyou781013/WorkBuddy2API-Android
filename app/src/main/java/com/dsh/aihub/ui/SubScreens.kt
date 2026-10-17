@@ -17,6 +17,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -389,13 +396,44 @@ private fun storageReport(app: AppState): String = buildString {
 fun KeepAliveScreen(context: Context, app: AppState) {
     var report by remember { mutableStateOf<String?>(null) }
     val steps = remember { KeepAliveGuide.steps() }
-    val notificationsGranted = remember(app.revision) {
+
+    // 授权状态会随用户去系统设置操作而变化，而 Composition 在此期间并不重组。
+    // 用一个自增令牌在每次回到前台时强制重算，否则用户授权完返回本页，
+    // 界面仍显示"未授权"，会误以为没生效而反复操作。
+    var refreshToken by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshToken++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 关键三项授权状态：电池优化白名单、精确闹钟、安装未知应用。
+    // 其中电池优化白名单是后台存活的决定性一环——没有它，Doze 会冻结服务，
+    // 其余保活手段（看门狗、悬浮窗、START_STICKY）全部失效。
+    val ignoringBattery = remember(refreshToken) {
+        runCatching {
+            (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
+                .isIgnoringBatteryOptimizations(context.packageName)
+        }.getOrDefault(false)
+    }
+    val exactAlarmOk = remember(refreshToken) {
+        if (android.os.Build.VERSION.SDK_INT < 31) true
+        else runCatching {
+            (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager)
+                .canScheduleExactAlarms()
+        }.getOrDefault(false)
+    }
+
+    val notificationsGranted = remember(app.revision, refreshToken) {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
         } else true
     }
-    val channelDisabled = remember(app.revision) { ApiHostService.isChannelDisabled(context) }
+    val channelDisabled = remember(app.revision, refreshToken) { ApiHostService.isChannelDisabled(context) }
 
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -431,6 +469,31 @@ fun KeepAliveScreen(context: Context, app: AppState) {
                         }
                     )
                 }
+            }
+        }
+
+        // 关键授权：这是后台能否存活的先决条件。
+        // 单独成卡并置顶，因为实测未授权时其余保活手段（看门狗、悬浮窗、
+        // START_STICKY）全部失效——Doze 直接把进程冻结。原实现里
+        // KeepAliveGuide.requestIgnoreBattery() 已写好但从未被界面调用，
+        // 用户根本无从授权，这是"后台仍然不行"的直接原因。
+        item {
+            PcCard(title = "关键授权（缺一不可）") {
+                AuthRow(
+                    label = "电池优化白名单",
+                    ok = ignoringBattery,
+                    detail = if (ignoringBattery) "已加入，系统不再冻结本服务"
+                    else "未加入。Doze 会冻结服务，其余保活手段全部失效",
+                    action = if (ignoringBattery) null else "去授权"
+                ) { KeepAliveGuide.requestIgnoreBattery(context) }
+
+                AuthRow(
+                    label = "精确闹钟",
+                    ok = exactAlarmOk,
+                    detail = if (exactAlarmOk) "已允许，看门狗可准时唤醒"
+                    else "未允许。服务被杀后可能数小时才恢复",
+                    action = if (exactAlarmOk) null else "去授权"
+                ) { KeepAliveGuide.requestExactAlarm(context) }
             }
         }
 
@@ -495,4 +558,44 @@ private fun SwitchRow(
         summary = summary,
         trailing = { Switch(checked = checked, onCheckedChange = onChange) }
     )
+}
+
+/**
+ * 授权状态行：左侧状态文字 + 右侧「去授权」按钮。
+ *
+ * 为什么不用 Switch：这类授权不在本应用内完成，点了会跳到系统设置页，
+ * 用开关样式会让用户以为能在应用内直接切换。
+ */
+@Composable
+private fun AuthRow(
+    label: String,
+    ok: Boolean,
+    detail: String,
+    action: String?,
+    onAction: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth().padding(vertical = PcTokens.SpaceS / 2)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = if (ok) "✓" else "✗",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f)
+            )
+            if (action != null) {
+                TextButton(onClick = onAction) { Text(action) }
+            }
+        }
+        Text(
+            text = detail,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (ok) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.error
+        )
+    }
 }

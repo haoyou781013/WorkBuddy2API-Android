@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider 可共享路径。
+    只暴露 updates 一个子目录：应用更新下载的 APK 需要交给系统安装器读取，
+    其余内部文件不对外授权。范围越小越安全——FileProvider 一旦暴露整个
+    filesDir，任何拿到 content:// URI 的应用都能读到数据库与凭据。
+-->
+<paths>
+    <external-files-path name="updates" path="updates/" />
+    <!-- 兜底：极少数机型 getExternalFilesDir 返回 null，下载会落到 filesDir -->
+    <files-path name="files_updates" path="updates/" />
+</paths>
