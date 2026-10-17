@@ -25,17 +25,33 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # 不用 android-actions/setup-android@v3：该 action 内部会执行
+      # `sdkmanager tools`，而新版 cmdline-tools 16.0 已不再提供名为 tools 的包，
+      # 于是它以 exit code 1 直接失败（日志：Warning: Failed to find package 'tools'）。
+      # 这是该 action 与 cmdline-tools 版本不匹配导致的问题，与我们的工程无关。
+      #
+      # ubuntu-latest 镜像本身已预装 Android SDK（/usr/local/lib/android/sdk），
+      # 直接沿用预装环境，只补装我们需要的 platform 与 build-tools。
       - name: Install SDK Platform 37
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKM" ]; then
+            SDKM=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          fi
+          echo "sdkmanager: $SDKM"
+          "$SDKM" --version || true
+
           # 本项目 compileSdk 用的是带小版本号的 android-37.0（AGP 8.13 的新命名格式），
           # 先按这个名字装；若镜像源还没同步，回退到不带小版本号的 android-37。
-          # accept 全部许可，否则 sdkmanager 会卡在交互提示上直到 job 超时。
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0" \
-            || sdkmanager --install "platforms;android-37" "build-tools;36.0.0"
+          # 先接受全部许可，否则 sdkmanager 会卡在交互提示上直到 job 超时。
+          yes | "$SDKM" --licenses > /dev/null 2>&1 || true
+          "$SDKM" --install "platforms;android-37.0" "build-tools;36.0.0" \
+            || "$SDKM" --install "platforms;android-37" "build-tools;36.0.0"
+          echo "== 已安装 platforms =="
+          ls "$ANDROID_HOME/platforms" || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
