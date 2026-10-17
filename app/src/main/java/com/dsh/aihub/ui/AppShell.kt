@@ -217,6 +217,10 @@ fun AppShell(context: Context, app: AppState) {
                         targetContentZIndex = if (isSubEnter || forward) 1f else -1f
                     }
                 },
+                // 必须应用 Scaffold 给的 padding，否则内容会顶到屏幕最上沿，
+                // 被 CenterAlignedTopAppBar 盖住 —— 表现为「顶部文字被遮挡」。
+                // v1.3.0 引入 AnimatedContent 时漏了这一行。
+                modifier = Modifier.fillMaxSize().padding(padding),
                 label = "page",
             ) { key ->
                 Box(Modifier.fillMaxSize()) {

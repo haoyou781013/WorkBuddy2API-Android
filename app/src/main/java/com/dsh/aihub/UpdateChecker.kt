@@ -45,10 +45,44 @@ object UpdateChecker {
      * 只用于 GitHub 资产地址，见 [mirrorUrl] 的前缀校验。
      */
     private val MIRRORS = listOf(
-        "",                                        // 直连
-        "https://ghfast.top/",                     // 常用公共镜像
+        "https://ghfast.top/",                     // 公共镜像（国内可达性较好）
         "https://gh-proxy.com/",
+        "",                                        // 直连 GitHub，放最后
     )
+
+    /**
+     * APK 的备用下载地址，按优先级排列。
+     *
+     * 顺序理由：
+     *   ① Gitee 直发   —— 国内最容易连上，且是我们自己控制的仓库，
+     *                     可用性最稳定。release 资产同名可直接替换。
+     *   ② GitHub 镜像  —— Gitee 没有对应资产时（比如只发了 GitHub Release），
+     *                     走公共镜像，仍然避开直连。
+     *   ③ GitHub 直连  —— 兜底，国内经常失败但聊胜于无。
+     *
+     * 注意：Gitee 仓库只镜像源码，release 资产需要单独上传。
+     * 若 Gitee 上找不到同名 APK，会返回 404，随即落到 ②。
+     */
+    private fun sources(url: String, version: String): List<String> {
+        val out = ArrayList<String>(4)
+        // ① Gitee 直发。拼出来的地址若 404，循环会自然落到镜像。
+        out.add(giteeApkUrl(version))
+        // ② 镜像
+        MIRRORS.forEach { prefix ->
+            mirrorUrl(prefix, url)?.let { out.add(it) }
+        }
+        return out.distinct()
+    }
+
+    /**
+     * 按 tag 推导 Gitee 上的 APK 地址。
+     *
+     * Gitee 的 release 资产路径与 GitHub 不同，且没有 API 可直接列出时，
+     * 用约定文件名 `AIHub-<version>-release.apk` 直接拼。
+     * 下载失败会自动落到下一源，所以拼错不会造成死路。
+     */
+    private fun giteeApkUrl(version: String): String =
+        "https://gitee.com/haoyou781/aihub/releases/download/v$version/AIHub-$version-release.apk"
 
     private const val TIMEOUT_MS = 15_000
 
@@ -202,8 +236,10 @@ object UpdateChecker {
         val target = File(dir, "update-${release.version}.apk")
 
         var lastErr: String? = null
-        for (prefix in MIRRORS) {
-            val url = mirrorUrl(prefix, release.apkUrl) ?: continue
+        // 按优先级依次尝试：Gitee → GitHub 镜像 → GitHub 直连
+        val candidates = sources(release.apkUrl, release.version)
+        if (candidates.isEmpty()) throw CheckError("没有可用的下载地址")
+        for (url in candidates) {
             try {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = TIMEOUT_MS
