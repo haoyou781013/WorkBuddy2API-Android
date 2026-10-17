@@ -164,9 +164,23 @@ class QoderClaim(private val personalToken: String) {
         for (i in 0 until arr.length()) {
             val c = arr.optJSONObject(i) ?: continue
             if (c.optString("actionType") != "CLAIM_BENEFIT") continue
+            // 真实响应里没有 title / campaignName 字段（实测 2026-10-17）：
+            // {"campaignId":"01a130eb-...","campaignKey":"act-20261013-462",
+            //  "actionType":"CLAIM_BENEFIT","claimStatus":"CLAIMABLE",
+            //  "benefit":{"kind":"CREDITS","amount":100,...}}
+            //
+            // 所以名字要自己拼：benefit 决定类型和数量，campaignKey 作为兜底。
+            val benefit = c.optJSONObject("benefit")
+            val kind = benefit?.optString("kind") ?: ""
+            val amount = benefit?.optInt("amount", 0) ?: 0
+            val name = when {
+                kind == "CREDITS" && amount > 0 -> "$amount Credits"
+                kind.isNotBlank() -> kind
+                else -> c.optString("campaignKey", "活动")
+            }
             out += Campaign(
                 id = c.optString("campaignId"),
-                title = c.optString("title", c.optString("campaignName", "活动")),
+                title = name,
                 claimable = c.optString("claimStatus") == "CLAIMABLE",
             )
         }
@@ -184,10 +198,17 @@ class QoderClaim(private val personalToken: String) {
         val text = request("/sash/api/v1/me/campaigns/$campaignId/claim", "POST")
         lastClaimRaw = text
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return 0
+        // amount 的类型在各接口里不统一：列表里 benefit.amount 是整数
+        // (100)，领取响应可能给字符串或浮点，所以用 optString 再转，最稳。
+        fun pick(o: JSONObject?): Int? {
+            val v = o?.opt("amount") ?: return null
+            return v.toString().toDoubleOrNull()?.toInt()
+        }
         val data = json.optJSONObject("data")
-        return data?.optJSONObject("benefit")?.optDouble("amount", 0.0)?.toInt()
-            ?: data?.optDouble("amount", 0.0)?.toInt()
-            ?: json.optJSONObject("benefit")?.optDouble("amount", 0.0)?.toInt()
+        return pick(data?.optJSONObject("benefit"))
+            ?: pick(data)
+            ?: pick(json.optJSONObject("benefit"))
+            ?: pick(json)
             ?: 0
     }
 
