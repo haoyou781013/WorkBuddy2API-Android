@@ -81,6 +81,11 @@ android {
      */
     val compileSdkName: String = (project.findProperty("compileSdk") as String?) ?: "android-37.0"
     compileSdkVersion(compileSdkName)
+    // 必须指定 build-tools 34.0.4：
+    //   仓库里 35/36 的 aidl 是 x86-64 二进制，在 aarch64 上直接 bad machine；
+    //   34.0.4 是仅有的 aarch64 版，只有它能跑 AIDL 编译（Shizuku UserService 需要）。
+    //   aapt2 问题性质不同 —— 那个是 proot linker，已由 aapt2FromMavenOverride 解决。
+    buildToolsVersion = "34.0.4"
 
     defaultConfig {
         applicationId = "com.dsh.aihub"
@@ -88,8 +93,8 @@ android {
         targetSdk = 36
         // 版本号随功能变更递增：便于在设备上区分"是否装上的是新版"
         // （同 versionCode 覆盖安装后，界面上无从判断装的是哪一版）。
-        versionCode = 14
-        versionName = "1.3.1"
+        versionCode = 15
+        versionName = "1.4.0"
     }
 
     buildTypes {
@@ -122,6 +127,10 @@ android {
 
     buildFeatures {
         compose = true
+        // Shizuku UserService 是跨进程调用，接口必须走 AIDL。
+        // 官方已把 Shizuku.newProcess 收回 private，UserService + AIDL
+        // 是当前唯一稳定的执行 shell 的路径。
+        aidl = true
     }
 
     compileOptions {
@@ -159,6 +168,10 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Shizuku：借助 ADB/root 授权执行系统级操作（这里用于 appops 放行与 battery 白名单），
+    // 免去用户手动逐项点系统设置。api 提供运行时接口，provider 提供权限声明。
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     // ---- Compose 基建（版本与上方 force 一致，显式声明以免靠传递依赖碰运气）----
     val composeBom = platform("androidx.compose:compose-bom:2025.09.00")

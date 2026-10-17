@@ -92,5 +92,23 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Shizuku 授权 provider：Shizuku app 通过它向本应用下发权限。
+             exported 必须为 true，否则授权流程走不通。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true" />
+
+        <!-- Shizuku UserService：跑在 Shizuku 拉起的进程里，因此拥有
+             shell（ADB 授权）或 root 权限。用于一次性完成保活所需的
+             appops 放行与电池白名单，免去用户逐项手动设置。 -->
+        <service
+            android:name="com.dsh.aihub.shizuku.ShellService"
+            android:exported="true"
+            android:process=":shizuku_shell" />
+
     </application>
 </manifest>

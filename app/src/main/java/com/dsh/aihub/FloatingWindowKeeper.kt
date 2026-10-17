@@ -52,8 +52,18 @@ object FloatingWindowKeeper {
     private const val PREFS = "native_service"
     private const val KEY_ENABLED = "floating_window_enabled"
 
-    /** 球体直径（dp）。48dp 是 Android 最小可点击尺寸，小于它会很难拖准。 */
-    private const val BALL_DP = 52
+    /**
+     * 球体直径（dp）。
+     *
+     * 从 52 缩到 40：52dp 在 476dpi 屏上约 173px，占屏宽近 1/6，挡内容太明显。
+     * 40dp 仍是 Android 触摸目标的可接受下限（官方建议 48dp，但悬浮球有
+     * 拖动吸附等补偿手段，用户第一次拖到边缘后就很少需要精确点它）。
+     */
+    private const val BALL_DP = 40
+
+    /** 展开面板尺寸（dp）。窄而高，避免铺满屏幕喧宾夺主。 */
+    private const val PANEL_W_DP = 200
+    private const val PANEL_H_DP = 168
 
     /** 收起后露在屏幕内的宽度占比（0.5 = 只露半个球）。 */
     private const val COLLAPSED_VISIBLE_RATIO = 0.5f
@@ -150,8 +160,100 @@ object FloatingWindowKeeper {
         windowView?.updateStatus(running)
     }
 
+    /** 展开的信息面板。null = 当前未展开。 */
+    private var panelView: View? = null
+
+    /**
+     * 在球旁边展开信息面板。
+     *
+     * 数据在展开的瞬间抓一次快照，之后不自动刷新 ——
+     * 悬浮窗每秒刷数据库会明显耗电，而用户看这个面板通常只停留几秒。
+     * 想刷新就关掉再点一次。
+     */
+    fun showPanel(context: Context, port: Int) {
+        if (panelView != null) return
+        val ball = windowView ?: return
+        val wm = windowManager ?: return
+        val lp = ball.layoutParams as? WindowManager.LayoutParams ?: return
+
+        runCatching {
+            val snapshot = runCatching { buildSnapshot(context, port) }
+                .getOrElse {
+                    FloatingPanel.Snapshot(false, 0, 0, 0, 0.0, port)
+                }
+            val panel = FloatingPanel(context.applicationContext, snapshot)
+            val w = (PANEL_W_DP * context.resources.displayMetrics.density).toInt()
+            val h = (PANEL_H_DP * context.resources.displayMetrics.density).toInt()
+            val (screenW, screenH) = screenSize(context, wm)
+
+            // 面板放在球的左侧还是右侧：球靠右就放左，反之放右，避免出屏。
+            val ballLeft = lp.x
+            val ballRight = lp.x + ball.width
+            val gap = (10 * context.resources.displayMetrics.density).toInt()
+            val x = if (ballRight > screenW / 2) {
+                (ballLeft - w - gap).coerceAtLeast(0)
+            } else {
+                (ballRight + gap).coerceAtMost(screenW - w)
+            }
+            val y = lp.y.coerceIn(0, (screenH - h).coerceAtLeast(0))
+
+            val params = WindowManager.LayoutParams(
+                w, h,
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else
+                    @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+                // NOT_FOCUSABLE：面板不需要输入焦点。FLAG_NOT_TOUCH_MODAL 让
+                // 面板外的触摸仍然传给下层应用，用户点别处即恢复原操作。
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                this.x = x
+                this.y = y
+            }
+            // 点面板本身即关闭 —— 比加一个关闭按钮省空间，且符合「再看一眼就收起」的直觉。
+            panel.setOnClickListener { hidePanel() }
+            wm.addView(panel, params)
+            panelView = panel
+            Log.i(TAG, "panel shown at ($x, $y)")
+        }.onFailure { Log.w(TAG, "show panel failed", it) }
+    }
+
+    fun hidePanel() {
+        val p = panelView ?: return
+        runCatching { windowManager?.removeView(p) }
+            .onFailure { Log.w(TAG, "remove panel failed", it) }
+        panelView = null
+    }
+
+    fun isPanelShowing(): Boolean = panelView?.isAttachedToWindow == true
+
+    /** 抓一次用量快照。任何一步失败都返回保守值，不抛异常 —— 悬浮窗不该因为查库失败而崩。 */
+    private fun buildSnapshot(context: Context, port: Int): FloatingPanel.Snapshot {
+        val store = NativeCore.store(context)
+        val accounts = store.listAccounts()
+        var enabled = 0
+        for (i in 0 until accounts.length()) {
+            if (accounts.optJSONObject(i)?.optBoolean("enabled", true) == true) enabled++
+        }
+        val healthy = store.countHealthy()
+        val usage = store.usageSummaryToday()
+        return FloatingPanel.Snapshot(
+            running = true,
+            healthy = healthy,
+            total = enabled,
+            todayRequests = usage.first,
+            todayCredits = usage.second,
+            port = port,
+        )
+    }
+
     /** 服务停止时移除窗口，避免残留一个"运行中"的假象。 */
     fun hide(context: Context) {
+        hidePanel()
         val view = windowView ?: return
         runCatching { windowManager?.removeView(view) }
             .onFailure { Log.w(TAG, "remove floating ball failed", it) }
@@ -480,7 +582,11 @@ object FloatingWindowKeeper {
                         snapToEdge()
                     } else {
                         expand()
-                        // 单击视为"我要用一下"，给一次新的收拢倒计时。
+                        // 单击 = 展开信息面板。再点一次收起（toggle）。
+                        // 面板数据在展开瞬间抓一次，不自动刷新 —— 悬浮窗每秒查库
+                        // 会明显耗电，而用户看这个通常只停留几秒。
+                        val ctx = context
+                        if (isPanelShowing()) hidePanel() else showPanel(ctx, port)
                         handler.removeCallbacks(collapseTask)
                         handler.postDelayed(collapseTask, AUTO_COLLAPSE_DELAY)
                     }

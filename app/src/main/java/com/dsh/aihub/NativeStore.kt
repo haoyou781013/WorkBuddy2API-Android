@@ -138,6 +138,16 @@ class NativeStore private constructor(context: Context) : SQLiteOpenHelper(
             cache_key TEXT PRIMARY KEY, payload TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'dynamic',
             fetched_at REAL NOT NULL, expires_at REAL NOT NULL
         )""")
+        // 会话粘性表：同一会话尽量绑定同一账号，避免多轮对话上下文丢失。
+        //
+        // 为什么落库而非内存：App 会被系统杀掉，纯内存粘性重启即失效。
+        // 参考实现的 Redis 镜像是为服务端多实例准备的，单机 App 用 SQLite 即可。
+        db.execSQL("""CREATE TABLE IF NOT EXISTS session_bindings (
+            session_key TEXT PRIMARY KEY,
+            account_key TEXT NOT NULL,
+            last_active REAL NOT NULL
+        )""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sb_active ON session_bindings(last_active)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_accounts_pick ON accounts(enabled, cooldown_until, priority)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_logs(ts)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_logs(model)")
@@ -228,6 +238,35 @@ class NativeStore private constructor(context: Context) : SQLiteOpenHelper(
     fun markAccountSuccess(accountKey: String): Boolean = updateAccount(accountKey, ContentValues().apply {
         put("failure_count", 0); put("cooldown_until", 0); put("last_used_at", nowSeconds()); put("updated_at", nowSeconds())
     })
+
+    /**
+     * 今日用量汇总：返回 (请求数, 消耗积分)。
+     *
+     * 「今日」按本地时区当天 00:00 起算，与 UI 上「今日」的口径一致。
+     * 只统计成功请求 —— 错误请求不消耗额度，算进去会让数字虚高。
+     */
+    fun usageSummaryToday(): Pair<Int, Double> = run {
+        val cal = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val startTs = cal.timeInMillis / 1000.0
+        var count = 0
+        var credits = 0.0
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*), COALESCE(SUM(credits),0) FROM usage_logs WHERE ts>=? AND status='ok'",
+            arrayOf(startTs.toString())
+        ).use { c ->
+            if (c.moveToFirst()) {
+                count = c.getInt(0)
+                credits = c.getDouble(1)
+            }
+        }
+        count to credits
+    }
+
 
     /**
      * 统计「健康」账号数：可用 + 不在冷却 + 仍有额度。
@@ -450,6 +489,117 @@ class NativeStore private constructor(context: Context) : SQLiteOpenHelper(
         if (markUsed) updateAccount(selected.getString("account_key"), ContentValues().apply { put("last_used_at", now); put("updated_at", now) })
         selected
     }
+
+    /**
+     * 会话感知选号：同一会话（sessionKey）尽量固定同一账号。
+     *
+     * 为什么需要：多轮对话每次换账号，上游看到的是不同会话，上下文会丢。
+     * 用户感受是「聊到一半它忘了前面说的话」。
+     *
+     * 双段分配（参考 workbuddy2api-panel session.go:181）：
+     *   ① 有空闲账号（未被任何会话绑定）→ 优先用，让会话尽量独占账号
+     *   ② 全绑定了 → 退到可用池哈希
+     *   用哈希而非随机：同一 key 总映射到同一位置。即使绑定丢失，
+     *   重建时也大概率落回同一个号——这是「软粘性」，比纯随机稳。
+     *
+     * @param sessionKey 会话标识（如 X-Conversation-ID）；空则退化为普通选号
+     */
+    fun selectAccountForSession(sessionKey: String?, region: String? = null): JSONObject? {
+        if (sessionKey.isNullOrBlank()) return selectAccount(region = region)
+        val key = sessionKey.trim()
+        val now = nowSeconds()
+
+        synchronized(lock) {
+            // ① 已绑定且仍健康 → 直接用
+            val boundUid = readableDatabase.rawQuery(
+                "SELECT account_key FROM session_bindings WHERE session_key=? AND last_active>?",
+                arrayOf(key, (now - SESSION_TTL).toString())
+            ).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+
+            if (boundUid != null) {
+                val acc = getAccount(boundUid)
+                if (acc != null &&
+                    acc.optBoolean("enabled", true) &&
+                    acc.optDouble("cooldown_until") <= now &&
+                    (acc.isNull("credits_remaining") || acc.optDouble("credits_remaining") > 0) &&
+                    (region.isNullOrBlank() || acc.optString("region") == region)
+                ) {
+                    touchSessionLocked(key, boundUid, now)
+                    return acc
+                }
+            }
+
+            // ② 重新分配。先拿到正常选号的结果池（不标记使用，由调用方决定）。
+            val picked = selectAccount(markUsed = false, region = region) ?: return null
+
+            // 双段：优先未被任何会话绑定的号
+            val bound = mutableSetOf<String>()
+            readableDatabase.rawQuery(
+                "SELECT DISTINCT account_key FROM session_bindings WHERE last_active>?",
+                arrayOf((now - SESSION_TTL).toString())
+            ).use { c -> while (c.moveToNext()) bound += c.getString(0) }
+
+            val pickedUid = picked.optString("account_key")
+            val chosenUid = if (pickedUid in bound) {
+                // 选中的号已被别的会话占用 → 在可用账号里找空闲的
+                val idle = listIdleAccountKeys(bound, region, now)
+                if (idle.isEmpty()) pickedUid
+                else idle[Math.floorMod(key.hashCode(), idle.size)]
+            } else {
+                pickedUid
+            }
+
+            bindSessionLocked(key, chosenUid, now)
+            return getAccount(chosenUid) ?: picked
+        }
+    }
+
+    /** 会话绑定 TTL：30 分钟无活动即视为结束（对齐参考实现默认值）。 */
+    private val SESSION_TTL = 1800.0
+
+    /** 请求成功时调用：粘性跟随成功号（重试换号成功后立刻改绑）。 */
+    fun bindSessionOnSuccess(sessionKey: String?, accountKey: String) {
+        if (sessionKey.isNullOrBlank() || accountKey.isBlank()) return
+        synchronized(lock) { bindSessionLocked(sessionKey.trim(), accountKey, nowSeconds()) }
+    }
+
+    /** 清理过期绑定，避免表无限增长。由维护任务周期性调用。 */
+    fun pruneSessions(): Int = synchronized(lock) {
+        writableDatabase.delete("session_bindings", "last_active<?", arrayOf((nowSeconds() - SESSION_TTL).toString()))
+    }
+
+    private fun touchSessionLocked(key: String, accountKey: String, now: Double) {
+        writableDatabase.execSQL(
+            "UPDATE session_bindings SET last_active=? WHERE session_key=?",
+            arrayOf<Any>(now, key)
+        )
+    }
+
+    private fun bindSessionLocked(key: String, accountKey: String, now: Double) {
+        writableDatabase.execSQL(
+            "INSERT OR REPLACE INTO session_bindings(session_key, account_key, last_active) VALUES(?,?,?)",
+            arrayOf<Any>(key, accountKey, now)
+        )
+    }
+
+    /** 列出「可用且未被任何会话绑定」的账号 key，供双段分配第二段使用。 */
+    private fun listIdleAccountKeys(bound: Set<String>, region: String?, now: Double): List<String> {
+        val out = mutableListOf<String>()
+        val regionClause = if (region.isNullOrBlank()) "" else " AND region=?"
+        val args = if (region.isNullOrBlank()) null else arrayOf(region)
+        readableDatabase.rawQuery(
+            "SELECT account_key, credits_remaining, cooldown_until FROM accounts WHERE enabled=1$regionClause ORDER BY id",
+            args
+        ).use { c ->
+            while (c.moveToNext()) {
+                val uid = c.getString(0)
+                val credits = if (c.isNull(1)) 1.0 else c.getDouble(1)
+                if (uid !in bound && credits > 0 && c.getDouble(2) <= now) out += uid
+            }
+        }
+        return out
+    }
+
 
     /**
      * 账号是否已过最小发送间隔（账号级限速）。
@@ -862,7 +1012,7 @@ class NativeStore private constructor(context: Context) : SQLiteOpenHelper(
          * 进而执行 createSchema 里的 CREATE TABLE IF NOT EXISTS 把新表补上。
          * v9：新增 credit_ledger（积分账本，用于区分签到/奖励/消耗）。
          */
-        private const val DATABASE_VERSION = 9
+        private const val DATABASE_VERSION = 10
         private const val KEY_ALIAS = "workbuddy_native_app_keys"
         /** 优先级下限：0 = 不额外加权（选号权重 = 1.0）。 */
         const val MIN_PRIORITY = 0

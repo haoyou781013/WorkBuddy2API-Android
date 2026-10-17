@@ -1,5 +1,7 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.ui.platform.LocalContext
+import com.dsh.aihub.ShizukuKeeper
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -449,6 +451,56 @@ fun KeepAliveScreen(context: Context, app: AppState) {
                         "本版已加入开机自启、划掉任务后自动重启、15 分钟看门狗兜底，即使中途被杀也会自动拉回。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+
+        // ---- Shizuku：一次性自动放行 ----
+        //
+        // 放在「请依次完成」之前：如果用户能用 Shizuku，下面那一长串手动步骤
+        // 大部分可以跳过。先给自动化方案，再给手动兜底，顺序符合「最省事的先试」。
+        item {
+            val shizuku = remember(refreshToken) { ShizukuKeeper.status() }
+            val activity = LocalContext.current as? android.app.Activity
+            PcCard(title = "用 Shizuku 一键放行") {
+                PcRow(
+                    title = when {
+                        !shizuku.running -> "Shizuku 未运行"
+                        !shizuku.granted -> "点此授权"
+                        else -> "已就绪"
+                    },
+                    summary = when {
+                        !shizuku.running -> "需先安装并启动 Shizuku（无需 root，用 ADB 授权即可）"
+                        !shizuku.granted -> "授权后可自动完成下面的所有系统设置"
+                        else -> "可再次点击重新应用所有放行项"
+                    },
+                    value = if (shizuku.granted) "重新应用" else "授权",
+                    onClick = {
+                        if (activity == null) return@PcRow
+                        if (!shizuku.running) {
+                            app.showMessage("请先安装并启动 Shizuku")
+                            return@PcRow
+                        }
+                        if (!shizuku.granted) {
+                            ShizukuKeeper.requestPermissionAndBind(activity)
+                            app.showMessage("请在弹窗中允许 AIHub 使用 Shizuku")
+                        } else {
+                            val n = ShizukuKeeper.applyKeepAlive(context)
+                            app.showMessage(
+                                if (n >= 0) "已应用 $n 项系统放行"
+                                else "服务连接中，稍后再试"
+                            )
+                        }
+                    },
+                )
+                Spacer(Modifier.height(PcTokens.SpaceS))
+                Text(
+                    "Shizuku 通过 ADB 授权执行系统命令，**不需要 root**。授权一次后，" +
+                        "可自动完成后台限制、唤醒锁、精确闹钟、前台服务、电池白名单等放行项 —— " +
+                        "也就是下面那些需要你手动点开的地方。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

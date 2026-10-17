@@ -197,10 +197,18 @@ object NativeCore {
     @Synchronized
     fun headers(context: Context): Map<String, String> = accountForRequest(context).let { headersFor(it) }
 
+    /**
+     * @param sessionKey 会话标识。非空时走会话粘性选号（同一会话固定同一账号），
+     *   空则退化为普通加权选号。见 [NativeStore.selectAccountForSession]。
+     */
     @Synchronized
-    private fun accountForRequest(context: Context, region: AccountRegion? = null): Account {
+    private fun accountForRequest(
+        context: Context,
+        region: AccountRegion? = null,
+        sessionKey: String? = null,
+    ): Account {
         migrateLegacy(context)
-        val selected = store(context).selectAccount(region = region?.id) ?: throw IOException(
+        val selected = store(context).selectAccountForSession(sessionKey, region?.id) ?: throw IOException(
             if (region == null) "尚未导入可用的 WorkBuddy 账号" else "没有可用的${region.label}账号"
         )
         var account = loadAccount(context, selected.getString("account_key")) ?: throw IOException("账号认证数据缺失")
@@ -820,7 +828,16 @@ object NativeCore {
         "max_completion_tokens", "reasoning_effort", "verbosity", "reasoning_summary", "thinking"
     )
 
-    fun upstreamRequest(context: Context, body: JSONObject, requiredRegion: AccountRegion): UpstreamCall {
+    /**
+     * @param sessionKey 会话标识。非空时同会话固定同账号（会话粘性），
+     *   避免多轮对话因换号导致上游上下文丢失。见 NativeStore.selectAccountForSession。
+     */
+    fun upstreamRequest(
+        context: Context,
+        body: JSONObject,
+        requiredRegion: AccountRegion,
+        sessionKey: String? = null,
+    ): UpstreamCall {
         // 此前这里是「白名单过滤」：把客户端 body 里允许的键拷贝进一个新 JSONObject。
         // 问题不只是顺序——白名单本身就和官方不一致（官方不发 stop/seed/user/n 等，
         // 却会发 store/prompt_cache_retention/parallel_tool_calls）。
@@ -851,7 +868,7 @@ object NativeCore {
         body.keys().forEach { key ->
             if (key !in BODY_FIELD_ORDER && key in EXTRA_FIELD_ALLOWLIST) filtered.put(key, body.get(key))
         }
-        val account = accountForRequest(context, requiredRegion)
+        val account = accountForRequest(context, requiredRegion, sessionKey)
         // 主对话走会话头版本：官方每一笔对话请求都挂会话上下文，
         // 这也是「反代看起来像 CLI」最关键的一层（详见 headersForConversation 注释）。
         val url = "${account.backend}/v2/chat/completions"
@@ -1096,5 +1113,52 @@ object NativeCore {
         status >= 500 -> 120L
         status > 0 -> 60L
         else -> 0L
+    }
+
+    /** 指数退避封顶：429 基准 300s，翻到 6 次是 9600s，截到 2 小时。 */
+    private const val BACKOFF_CAP_SECONDS = 7200L
+
+    /**
+     * 在基础冷却上叠加指数退避。
+     *
+     * 问题：原 [cooldownFor] 是固定时长。一个反复被限流的账号，
+     * 冷却 300s 到期后立刻又被选中、又被限流 —— 循环下去，
+     * 用户看到的是「这个号好像坏了，一直在冷却」。
+     *
+     * 参考实现（workbuddy2api-panel cooldown.go:374）的三个要点：
+     *
+     *   1) **优先用上游给的重置时间**（resetAt），比自己猜准；
+     *   2) **仍在冷却中**的探测不翻倍 —— 否则频繁探测会让退避指数爆炸；
+     *   3) **封顶**，防止退避到天荒地老。
+     *
+     * @param status HTTP 状态码
+     * @param resetAtSeconds 上游给的重置墙钟（秒）。null 表示上游没给
+     * @param streak 这是连续第几次限流（调用方传入，1 表示首次）
+     */
+    fun cooldownFor(
+        status: Int,
+        resetAtSeconds: Long? = null,
+        streak: Int = 1,
+    ): Long {
+        val now = System.currentTimeMillis() / 1000
+        val base = cooldownFor(status)
+
+        // ① 上游给了重置时间 → 直接用，但截到封顶。
+        //    resetAt 已过期（时钟偏移）时给 1 秒，让它尽快恢复而不是卡死。
+        if (resetAtSeconds != null) {
+            return when {
+                resetAtSeconds > now + BACKOFF_CAP_SECONDS -> BACKOFF_CAP_SECONDS
+                resetAtSeconds > now -> resetAtSeconds - now
+                else -> 1L
+            }
+        }
+
+        // ② 无上游时间 → 指数退避。只有"新限流"才推进 streak，由调用方保证。
+        if (streak <= 1) return base
+        val exponent = (streak - 1).coerceAtMost(6)
+        val raw = base shl exponent
+        // ③ 抖动 ±20%：避免多个账号同时恢复、又同时被打爆。
+        val jitter = 0.8 + kotlin.random.Random.nextDouble() * 0.4
+        return (raw * jitter).toLong().coerceIn(1L, BACKOFF_CAP_SECONDS)
     }
 }

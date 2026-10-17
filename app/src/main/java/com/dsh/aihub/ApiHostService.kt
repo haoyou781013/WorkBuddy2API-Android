@@ -240,6 +240,28 @@ class ApiHostService : Service() {
         }
     }
 
+    /**
+     * 从请求头提取会话标识，供会话粘性选号使用。
+     *
+     * 按优先级取：
+     *   1. X-Conversation-ID —— 官方 CLI 用它，最准
+     *   2. X-Session-ID / Session-Id —— 常见客户端约定
+     *   3. Authorization 的 key 前缀 —— 同一 API key 视为同一会话的粗粒度兜底
+     *
+     * 都取不到返回 null，退化为普通加权选号（行为与引入粘性前一致）。
+     */
+    private fun sessionKeyFor(headers: Map<String, String>): String? {
+        headers["x-conversation-id"]?.takeIf { it.isNotBlank() }?.let { return it }
+        headers["x-session-id"]?.takeIf { it.isNotBlank() }?.let { return it }
+        headers["session-id"]?.takeIf { it.isNotBlank() }?.let { return it }
+        // 兜底：按 API key 分组。注意这是「每个客户端固定一个账号」而非真正的会话级，
+        // 粒度更粗，但比完全没有粘性好——至少同一个客户端的连续对话不会跳号。
+        headers["authorization"]?.removePrefix("Bearer ")?.trim()?.takeIf { it.isNotBlank() }?.let {
+            return "key:" + Integer.toHexString(it.hashCode())
+        }
+        return null
+    }
+
     private fun handle(socket: Socket) {
         socket.soTimeout = 300_000
         val input = BufferedInputStream(socket.getInputStream())
@@ -304,17 +326,17 @@ class ApiHostService : Service() {
                     val payload = parseBody(bodyText)
                     if ((payload.optJSONArray("messages")?.length() ?: 0) == 0)
                         throw ClientError("messages is required")
-                    proxy(output, socket, payload, Protocol.CHAT, payload.optBoolean("stream", false), selectedApp)
+                    proxy(output, socket, payload, Protocol.CHAT, payload.optBoolean("stream", false), selectedApp, headers)
                 }
                 method == "POST" && path == "/v1/messages" -> {
                     val payload = parseBody(bodyText)
                     proxy(output, socket, ProtocolAdapters.anthropicToChat(payload), Protocol.ANTHROPIC,
-                        if (payload.has("stream")) payload.optBoolean("stream") else true, selectedApp)
+                        if (payload.has("stream")) payload.optBoolean("stream") else true, selectedApp, headers)
                 }
                 method == "POST" && path == "/v1/responses" -> {
                     val payload = parseBody(bodyText)
                     proxy(output, socket, ProtocolAdapters.responsesToChat(payload), Protocol.RESPONSES,
-                        if (payload.has("stream")) payload.optBoolean("stream") else true, selectedApp)
+                        if (payload.has("stream")) payload.optBoolean("stream") else true, selectedApp, headers)
                 }
                 else -> json(output, 404, apiError("未找到端点", "not_found"))
             }
@@ -334,7 +356,19 @@ class ApiHostService : Service() {
         }
     }
 
-    private fun proxy(output: OutputStream, socket: Socket, chatBody: JSONObject, protocol: Protocol, stream: Boolean, app: JSONObject) {
+    /**
+     * @param reqHeaders 原始请求头，用于提取会话标识做粘性选号。
+     *   单独传而不是从别处读，是因为 proxy 运行在独立线程、拿不到 handle 的局部变量。
+     */
+    private fun proxy(
+        output: OutputStream,
+        socket: Socket,
+        chatBody: JSONObject,
+        protocol: Protocol,
+        stream: Boolean,
+        app: JSONObject,
+        reqHeaders: Map<String, String> = emptyMap(),
+    ) {
         // 提示词注入 + 第三方客户端指纹清洗（移植自 1.2.7 的 a.I2 / a.C0045h2.Y）。
         // 必须放在 proxy 最前面：所有协议适配器（anthropic/responses → chat）出来的
         // 都是同一份 requestBody，只在这里处理一次就不会漏，也不会重复注入。
@@ -373,7 +407,9 @@ class ApiHostService : Service() {
             // 结果重试又选中同一个号，等于没重试）。
             var attempt = 0
             while (true) {
-                val upstream = NativeCore.upstreamRequest(this, chatBody, region)
+                // 会话粘性：拿到本次请求的会话标识，让同一会话固定同一账号。
+                // 没有会话头时传 null，退化为普通加权选号（行为与之前一致）。
+                val upstream = NativeCore.upstreamRequest(this, chatBody, region, sessionKeyFor(reqHeaders))
                 account = upstream.account
                 call = NativeCore.http.newCall(upstream.request)
                 // 网络层异常单独兜一层：连接被重置/DNS 抖动/复用到死连接时，
@@ -398,7 +434,16 @@ class ApiHostService : Service() {
                 val code = response.code
                 // 失败必须落痕：此前这里直接 return，429 打完一个标记都不留，
                 // 下一个请求照样选中同一个已被限流的账号，形成限流风暴。
-                NativeCore.store(this).markAccountFailure(account.key, NativeCore.cooldownFor(code))
+                // 取当前 streak（连续失败次数）：markAccountFailure 会把 failure_count+1，
+                // 所以这里先读旧值再加 1，作为「这是连续第几次」传给退避计算。
+                // 冷却中的探测不翻倍由 streak 冻结保证：成功时 failure_count 清零
+                // （markAccountSuccess:228），所以 streak 只在失败链里增长。
+                val streak = (NativeCore.store(this).getAccount(account.key)
+                    ?.optInt("failure_count") ?: 0) + 1
+                NativeCore.store(this).markAccountFailure(
+                    account.key,
+                    NativeCore.cooldownFor(code, resetAtSeconds = null, streak = streak),
+                )
                 if (code in RETRYABLE_STATUS && attempt == 0 && !socket.isClosed) {
                     attempt++
                     response.close()
