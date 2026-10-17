@@ -60,6 +60,7 @@ fun QoderScreen() {
     var chatPrompt by remember { mutableStateOf("用一句话说明你是谁") }
     var chatReply by remember { mutableStateOf<String?>(null) }
     var chatting by remember { mutableStateOf(false) }
+    var chatDiag by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf(false) }
 
     Column(
@@ -304,13 +305,27 @@ fun QoderScreen() {
                         val r = withContext(Dispatchers.IO) {
                             runCatching {
                                 val jt = QoderClient(context).exchangeJobToken(pat)
+                                val client = QoderChat(jt)
                                 val sb = StringBuilder()
-                                QoderChat(jt).chat(chatModel, listOf(QoderChat.Message("user", chatPrompt))) { d ->
-                                    sb.append(d)
-                                    // 每次增量都在主线程刷新，让用户看到字在流
-                                    scope.launch { chatReply = sb.toString() }
+                                val text = try {
+                                    client.chat(
+                                        chatModel,
+                                        listOf(QoderChat.Message("user", chatPrompt)),
+                                    ) { d ->
+                                        sb.append(d)
+                                        // 每次增量都在主线程刷新，让用户看到字在流
+                                        scope.launch { chatReply = sb.toString() }
+                                    }
+                                } finally {
+                                    // 无论成功失败都把原始 SSE 带回来
+                                    val raw = client.lastRawSse
+                                    chatDiag = if (raw.isNullOrBlank()) {
+                                        "未收到任何 SSE 事件\n请求体长度 ${client.lastPlainBody?.length ?: 0}"
+                                    } else {
+                                        "原始 SSE（前 1500 字）：\n${raw.take(1500)}"
+                                    }
                                 }
-                                sb.toString()
+                                text
                             }
                         }
                         chatReply = r.fold(
@@ -329,6 +344,30 @@ fun QoderScreen() {
                 androidx.compose.foundation.text.selection.SelectionContainer {
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
+            }
+
+            // 诊断原文。用户反馈「一直转圈无输出」，只看转圈分不清是
+            // 没收到事件还是字段名不对，把原始 SSE 摊开才查得下去。
+            chatDiag?.takeIf { it.isNotBlank() }?.let { d ->
+                Spacer(Modifier.height(PcTokens.SpaceS))
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        d,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                        cm.setPrimaryClip(
+                            android.content.ClipData.newPlainText("AIHub 对话诊断", d)
+                        )
+                        chatDiag = "$d\n\n（已复制）"
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("复制诊断") }
             }
         }
     }

@@ -72,7 +72,9 @@ class QoderChat(private val jobTokenJson: JSONObject) {
         val endpoint = ENDPOINT_CN
         // Encode=1 表示请求体要按自定义字母表编码（cosy.go:184 EncodeBody）。
         // 签名用的是**编码后**的 body，两者必须一致，否则 MD5 对不上。
-        val body = QoderCrypto.encode(buildBody(model, messages, maxTokens).toByteArray(Charsets.UTF_8))
+        val plainBody = buildBody(model, messages, maxTokens)
+        lastPlainBody = plainBody
+        val body = QoderCrypto.encode(plainBody.toByteArray(Charsets.UTF_8))
         val date = (System.currentTimeMillis() / 1000).toString()
         val payload = QoderCrypto.payloadB64(s.info, UUID.randomUUID().toString())
         val bearer = QoderCrypto.cosyBearer(
@@ -124,10 +126,17 @@ class QoderChat(private val jobTokenJson: JSONObject) {
     /** 解析 SSE，抠出 llm_model_result 里的增量文本。 */
     private fun readSse(conn: HttpURLConnection, onDelta: (String) -> Unit): String {
         val sb = StringBuilder()
+        // 记录原始 SSE 行用于诊断。
+        //
+        // 用户实测「一直转圈无输出」，说明请求发出去了但没解析出内容。
+        // 到底是没收到事件、还是收到但字段名不对，只有看原始行才能区分 ——
+        // 光靠「转圈」这个现象没法判断。
+        val raw = StringBuilder()
         BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 val l = line ?: continue
+                if (raw.length < 4000) raw.append(l).append('\n')
                 if (!l.startsWith("data:")) continue
                 val data = l.removePrefix("data:").trim()
                 if (data.isEmpty() || data == "[DONE]") continue
@@ -138,8 +147,17 @@ class QoderChat(private val jobTokenJson: JSONObject) {
                 }
             }
         }
+        lastRawSse = raw.toString()
         return sb.toString()
     }
+
+    /** 最近一次对话收到的原始 SSE，供 UI 诊断展示。 */
+    var lastRawSse: String? = null
+        private set
+
+    /** 最近一次请求的 body（编码前），供诊断。 */
+    var lastPlainBody: String? = null
+        private set
 
     /**
      * 从一条 SSE data 里取增量内容。
