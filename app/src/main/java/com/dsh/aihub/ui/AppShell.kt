@@ -1,5 +1,11 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
@@ -19,8 +25,6 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -40,7 +44,8 @@ import com.dsh.aihub.AboutScreen
  * 应用外壳 —— 全 App 唯一的页面容器与导航（Material 3 版）。
  *
  * 相对 Miuix 原版的改动仅在**外观层**，导航语义完全保留：
- *   ① 底部导航从 Miuix NavigationBar 换成 M3 NavigationBar + NavigationBarItem
+ *   ① 底部导航从 Miuix NavigationBar 换成自建 Row（M3 的 NavigationBarItem
+ *      会把每格撑到屏宽/6、固定 80dp 高，纯文字 Tab 显得太空旷）
  *   ② 顶栏从 SmallTopAppBar 换成 M3 CenterAlignedTopAppBar，返回按钮从文字变成图标
  *   ③ 图标从 MiuixIcons 换成 m3/M3Icons 内联图标集（零依赖、零资源）
  *   ④ 主题挂载点从 AppTheme（Miuix）换成 AppM3Theme
@@ -130,20 +135,32 @@ fun AppShell(context: Context, app: AppState) {
             },
             bottomBar = {
                 if (sub == SubPage.NONE) {
-                    NavigationBar {
+                    // 不用 M3 的 NavigationBarItem：它把每个 item 撑成
+                    // 「屏宽/6 + 固定 80dp 高」，纯文字 Tab 会被拉开一大片空白。
+                    //
+                    // 1081dp 有效宽度下每格约 180dp，而一个两字标签只需
+                    // 约 60dp —— 宽松感主要来自这里，不是 padding。
+                    //
+                    // 改为 Row + 等分 weight，自行控制高度与内边距。
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         AppTab.entries.forEach { item ->
-                            NavigationBarItem(
-                                  selected = tab == item,
-                                  onClick = { tab = item },
-                                  // 关掉 M3 默认的"胶囊只包图标"指示器。
-                                  //
-                                  // M3 规范里选中背景只圈住 icon，label 落在
-                                  // 它下方，视觉上就是"文字悬在背景块下面"。
-                                  // 这里改为自己画一个包住 icon + label 的整体底。
-                                  icon = { TabContent(item, selected = tab == item) },
-                                  label = null,
-                                  alwaysShowLabel = false,
-                              )
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) { tab = item },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                TabContent(item, selected = tab == item)
+                            }
                         }
                     }
                 }
@@ -181,9 +198,8 @@ fun AppShell(context: Context, app: AppState) {
 /**
  * 底部栏单个 Tab 的视觉。
  *
- * 为什么不用 NavigationBarItem 自带的选中指示器：
- *   它只包图标，文字落在背景块外面，看起来像"文字悬在框下方"。
- *   这里用一个整体 Surface 承载标签，选中时整块高亮。
+ * 选中态用整体 Surface 承载标签，选中时整块高亮。
+ * （M3 的 NavigationBarItem 只圈图标，文字会落在背景块外面。）
  *
  * 为什么是纯文字、没有图标：
  *   内联 ImageVector 在 release 包里始终画不出来。R8 裁剪、
@@ -212,7 +228,10 @@ private fun TabContent(tab: AppTab, selected: Boolean) {
             maxLines = 1,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             // 纯文字 Tab 若只有字高，点击区会太窄，这里补足触摸高度。
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            // 横向 16dp 足够容纳两字标签；纵向 7dp 让整体高度落在
+            // 36dp 左右（14sp 字高 ~18dp + 14dp padding），
+            // 比 M3 默认的 80dp 矮一半，视觉上紧凑得多。
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
         )
     }
 }
