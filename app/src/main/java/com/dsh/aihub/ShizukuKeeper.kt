@@ -121,6 +121,66 @@ object ShizukuKeeper {
      *
      * @return 成功执行的条数；-1 表示 shell 服务未就绪
      */
+    /**
+     * 执行单条命令并返回输出。用于诊断和临时排查。
+     *
+     * 与 [applyKeepAlive] 的区别：这里需要拿到 stdout，所以要阻塞读流。
+     * 调用方必须在后台线程调用，否则会把 UI 卡住。
+     *
+     * @return stdout（失败时为空串）
+     */
+    fun exec(command: String): String {
+        val svc = shell ?: return ""
+        return runCatching {
+            val r = svc.exec(command)
+            r.getOrNull(1).orEmpty()
+        }.getOrDefault("")
+    }
+
+    /** shell 服务是否就绪（能执行命令）。 */
+    fun isReady(): Boolean = shell != null
+
+    /**
+     * ColorOS / OxygenOS 保活诊断。
+     *
+     * 为什么需要它：厂商清理器（Oppo Athena）的决策逻辑不读 appops 和
+     * 电池白名单，它用自己维护的名单。不先把真实配置查出来，
+     * 改任何东西都是盲猜。
+     *
+     * 一次性跑完所有检查，返回可直接展示的文本。
+     */
+    fun diagnose(context: Context): String {
+        if (!isReady()) return "Shizuku 服务未就绪，请先授权"
+        val pkg = context.packageName
+        val sb = StringBuilder()
+
+        fun section(title: String, cmd: String) {
+            sb.append("\n=== ").append(title).append(" ===\n")
+            val out = exec(cmd).trim()
+            sb.append(if (out.isEmpty()) "（无输出）" else out).append('\n')
+        }
+
+        section("电池白名单", "dumpsys deviceidle whitelist | grep $pkg")
+        section("关键 appops",
+            "cmd appops get $pkg RUN_IN_BACKGROUND; " +
+            "cmd appops get $pkg WAKE_LOCK; " +
+            "cmd appops get $pkg START_FOREGROUND")
+        section("进程 oom_adj（越小越不容易被杀，前台=-900 左右）",
+            "cat /proc/\$(pidof $pkg)/oom_score_adj 2>/dev/null")
+        section("是否在省电模式",
+            "settings get global low_power")
+        section("ColorOS 冻结开关",
+            "settings get global oplus_app_freeze_enable; " +
+            "settings get system oplus_bg_freeze_enable; " +
+            "settings get global oplus_athena_enable")
+        section("是否被判定为异常耗电",
+            "dumpsys deviceidle | grep -i $pkg")
+        section("AMS 中的进程状态",
+            "dumpsys activity processes | grep -A2 $pkg | head -20")
+
+        return sb.toString()
+    }
+
     fun applyKeepAlive(context: Context): Int {
         val svc = shell ?: run {
             Log.i(TAG, "applyKeepAlive: shell 服务未就绪，先请求授权")

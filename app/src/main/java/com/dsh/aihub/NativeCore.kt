@@ -1,5 +1,6 @@
 package com.dsh.aihub
 
+import kotlin.random.Random
 import android.content.Context
 import android.util.Log
 import okhttp3.ConnectionPool
@@ -201,7 +202,20 @@ object NativeCore {
      * @param sessionKey 会话标识。非空时走会话粘性选号（同一会话固定同一账号），
      *   空则退化为普通加权选号。见 [NativeStore.selectAccountForSession]。
      */
-    @Synchronized
+    // 注意：这里**故意不加 @Synchronized**。
+    //
+    // 原实现是全局锁，虽然能防止同一账号并发刷新，但代价是所有账号的请求
+    // 全被串行化 —— 账号 A 刷新时要走一次完整网络往返（可能数秒），期间
+    // 账号 B、C 的请求全部排队。多账号场景下这是明显的性能塌陷。
+    //
+    // 并发安全由两处保证：
+    //   ① NativeStore 内部所有操作都在 synchronized(lock) 内
+    //   ② 刷新走 refreshWithLock()，按账号粒度加锁 + 双重检查
+    //
+    // 未加锁的风险点已逐个核对：
+    //   · migrateLegacy 幂等（跑第二次直接 return）
+    //   · loadAccount / saveAccount 走 NativeStore，自身同步
+    //   · selectAccountForSession 内部 synchronized
     private fun accountForRequest(
         context: Context,
         region: AccountRegion? = null,
@@ -213,7 +227,9 @@ object NativeCore {
         )
         var account = loadAccount(context, selected.getString("account_key")) ?: throw IOException("账号认证数据缺失")
         val expiresAt = normalizedExpiryMillis(account.auth)
-        if (expiresAt > 0 && System.currentTimeMillis() >= expiresAt - 60_000L) account = refreshToken(context, account)
+        if (expiresAt > 0 && System.currentTimeMillis() >= expiresAt - refreshLeadMs(account)) {
+            account = refreshWithLock(context, account)
+        }
         return account
     }
 
@@ -245,7 +261,9 @@ object NativeCore {
      * 会话 ID 按账号分桶持久化（SessionTracker），换账号必然换会话——
      * 两个账号共享同一个 X-Conversation-ID 是会被上游直接关联的硬伤。
      */
-    @Synchronized
+    // 同样不加 @Synchronized：函数体内没有共享可变状态，
+    // SessionTracker 自身保证并发安全。挂在对话热路径上的全局锁
+    // 会把所有并发的对话请求串行化。
     private fun headersForConversation(context: Context, account: Account): MutableMap<String, String> {
         val session = SessionTracker.sessionFor(context, account.key)
         val messageId = SessionTracker.newMessageId()
@@ -261,6 +279,59 @@ object NativeCore {
         val account = loadAccount(context, accountKey) ?: throw IOException("账号不存在：$accountKey")
         return refreshToken(context, account)
     }
+
+    /**
+     * 刷新提前量的抖动缓存：accountKey → 本次进程内固定的提前毫秒数。
+     *
+     * 为什么要抖动：多账号通常同时登录、同时过期。固定提前 60 秒的话，
+     * 它们的刷新请求会挤在同一秒打向上游 —— 在上游看来是明显的机器行为。
+     *
+     * 为什么按账号固定而非每次随机：随机抖动会让同一账号的提前量在每次
+     * 求值时跳变，导致「刚判过不需要刷新，下一秒又判需要」。按账号固定后，
+     * 判定可复现，也让多账号各自落在不同的时间点。
+     */
+    private val refreshLeadCache = ConcurrentHashMap<String, Long>()
+
+    /** 基础提前量：60 秒。抖动范围 ±15%，即 51s ~ 69s。 */
+    private fun refreshLeadMs(account: Account): Long {
+        return refreshLeadCache.getOrPut(account.key) {
+            val base = 60_000L
+            val jitter = (base * 0.15 * (Random.nextDouble() * 2 - 1)).toLong()
+            (base + jitter).coerceIn(30_000L, 120_000L)
+        }
+    }
+
+    /**
+     * 同一账号同时只允许一个刷新在跑。
+     *
+     * 为什么必须加锁：OAuth 的 refresh token 通常是一次性的 ——
+     * 两个请求同时拿着同一个 RT 去刷新，第一个成功换到新 RT，
+     * 第二个用已作废的 RT 就会拿到 invalid_grant。上游很可能因此
+     * 把账号判为异常。
+     *
+     * 为什么按账号加锁而不是全局 @Synchronized：
+     * 原实现在 accountForRequest 上挂 @Synchronized，那是**全局**串行 ——
+     * 账号 A 刷新时（一次网络往返，可能数秒），账号 B、C 的请求全被堵住。
+     * 按账号加锁后，不同账号可以并行刷新，只有同一账号才会排队。
+     *
+     * 拿到锁之后必须重新读一次账号：等锁期间别的线程可能已经刷新完了，
+     * 此时直接用它刷好的新 token，不必再刷一次。
+     */
+    private fun refreshWithLock(context: Context, account: Account): Account {
+        val lock = refreshLocks.getOrPut(account.key) { Any() }
+        synchronized(lock) {
+            // 双重检查：等锁期间可能已被别的线程刷新
+            val current = loadAccount(context, account.key) ?: account
+            val exp = normalizedExpiryMillis(current.auth)
+            if (exp > 0 && System.currentTimeMillis() < exp - refreshLeadMs(current)) {
+                return current   // 已被刷新，直接用
+            }
+            return refreshToken(context, current)
+        }
+    }
+
+    /** 每个账号一把锁。用 ConcurrentHashMap 保证并发创建安全。 */
+    private val refreshLocks = ConcurrentHashMap<String, Any>()
 
     private fun refreshToken(context: Context, account: Account): Account {
         val refresh = account.auth.optString("refreshToken")
