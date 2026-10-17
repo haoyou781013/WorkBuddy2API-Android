@@ -183,10 +183,14 @@ fun AppShell(context: Context, app: AppState) {
  *
  * 为什么不用 NavigationBarItem 自带的选中指示器：
  *   它只包图标，文字落在背景块外面，看起来像"文字悬在框下方"。
- *   这里用一个整体 Surface 承载 icon + label，选中时一起高亮。
+ *   这里用一个整体 Surface 承载标签，选中时整块高亮。
  *
- * 为什么竖排：
- *   6 个 Tab 平分屏宽，横排会挤掉文字。竖排是底部导航的通行做法。
+ * 为什么是纯文字、没有图标：
+ *   内联 ImageVector 在 release 包里始终画不出来。R8 裁剪、
+ *   addPathNodes 解析、keep 规则都排查过 —— pathData 字符串确实
+ *   进了 dex（7/7 存活），但 ImageVector 仍然不渲染。
+ *   与其在这条「字符串 pathData → ImageVector」的路上继续耗时，
+ *   不如直接用文字：6 个两字标签本身足够区分，也少一层依赖。
  */
 @Composable
 private fun TabContent(tab: AppTab, selected: Boolean) {
@@ -199,26 +203,16 @@ private fun TabContent(tab: AppTab, selected: Boolean) {
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
         shape = RoundedCornerShape(16.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Icon(
-                imageVector = tab.icon,
-                contentDescription = tab.label,
-                tint = fg,
-                modifier = Modifier.size(22.dp),
-            )
-            Text(
-                text = tab.label,
-                // labelSmall（11sp）在 6 个 Tab 并排时刚好放得下；
-                // 换 labelMedium 会让"概览""设置"等两字标签贴边。
-                style = MaterialTheme.typography.labelSmall,
-                color = fg,
-                maxLines = 1,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            )
-        }
+        Text(
+            text = tab.label,
+            // labelLarge（14sp）：没有图标之后文字要自己撑住 Tab，
+            // labelSmall 会显得单薄。6 个两字标签在 14sp 下仍放得下。
+            style = MaterialTheme.typography.labelLarge,
+            color = fg,
+            maxLines = 1,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            // 纯文字 Tab 若只有字高，点击区会太窄，这里补足触摸高度。
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        )
     }
 }
