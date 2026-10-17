@@ -341,10 +341,19 @@ class QoderClaim(private val personalToken: String) {
         }
         val exp = json.optLong("expiresAt", 0L)
         if (exp > 0) {
-            val d = java.util.Date(exp)
+            // 上游给的是**毫秒**时间戳（1793443277298 = 2026-10-31 18:41 UTC+8）。
+            // 按秒解释会溢出到公元 5 万年，所以这里不做单位推断，只按毫秒处理，
+            // 但加一次范围检查防止上游哪天改成秒。
+            val ms = if (exp < 100_000_000_000L) exp * 1000 else exp
             val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.CHINA)
+            // 时区固定 UTC+8。
+            //
+            // Qoder 的时间全部按新加坡时间（UTC+8）表述（官方文档明确写了），
+            // 而 SimpleDateFormat 默认用设备时区 —— 用户在别的时区看到的时间会
+            // 整体偏移，虽然此刻在东八区看不出来。
+            f.timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
             if (sb.isNotEmpty()) sb.append("  ·  ")
-            sb.append("到期 ${f.format(d)}")
+            sb.append("有效期至 ${f.format(java.util.Date(ms))}")
         }
         if (json.optBoolean("isQuotaExceeded", false)) {
             if (sb.isNotEmpty()) sb.append("\n")
