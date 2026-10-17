@@ -1,5 +1,9 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import android.content.Context
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,6 +49,7 @@ fun QoderScreen() {
     var report by remember { mutableStateOf<List<String>?>(null) }
     var claiming by remember { mutableStateOf(false) }
     var claimResult by remember { mutableStateOf<String?>(null) }
+    var reportText by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf(false) }
 
     Column(
@@ -60,13 +65,55 @@ fun QoderScreen() {
         )
         Spacer(Modifier.height(PcTokens.SpaceM))
 
+        // 输入框 + 独立的「粘贴」按钮。
+        //
+        // 为什么不用 TextField 自带的长按菜单：PAT 很长（80+ 字符），
+        // 长按选中再复制在手机上很难操作，而且基础 TextField 的长按菜单
+        // 在不同 ROM 上行为不一致。给一个一键粘贴按钮更可靠。
         OutlinedTextField(
             value = pat,
-            onValueChange = { pat = it },
+            onValueChange = { pat = it.trim() },   // 顺手去掉首尾空白，避免粘贴带入换行
             label = { Text("Qoder PAT") },
-            singleLine = true,
+            singleLine = false,
+            maxLines = 3,
+            textStyle = MaterialTheme.typography.bodySmall,
             modifier = Modifier.fillMaxWidth(),
         )
+        Spacer(Modifier.height(PcTokens.SpaceS))
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS),
+        ) {
+            OutlinedButton(
+                onClick = {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                    val text = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+                    if (!text.isNullOrBlank()) {
+                        pat = text.trim()
+                        claimResult = null
+                        report = null
+                    } else {
+                        claimResult = "剪贴板为空"
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("从剪贴板粘贴") }
+
+            OutlinedButton(
+                onClick = {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                        as android.content.ClipboardManager
+                    cm.setPrimaryClip(
+                        android.content.ClipData.newPlainText("Qoder PAT", pat)
+                    )
+                    claimResult = "已复制到剪贴板"
+                },
+                enabled = pat.isNotBlank(),
+                modifier = Modifier.weight(1f),
+            ) { Text("复制内容") }
+        }
         Spacer(Modifier.height(PcTokens.SpaceM))
 
         Button(
@@ -75,6 +122,7 @@ fun QoderScreen() {
                 scope.launch {
                     val r = withContext(Dispatchers.IO) { QoderVerify.run(context, pat) }
                     report = r.lines
+                    reportText = r.lines.joinToString("\n")
                     ok = r.ok
                     running = false
                 }
@@ -109,16 +157,40 @@ fun QoderScreen() {
         report?.let { lines ->
             Spacer(Modifier.height(PcTokens.SpaceL))
             PcCard(title = if (ok) "验证通过" else "验证未通过") {
-                lines.forEach { line ->
-                    Text(
-                        line,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (line.startsWith("✓")) MaterialTheme.colorScheme.primary
-                        else if (line.startsWith("✗")) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(4.dp))
+                // SelectionContainer 让文字可以长按选中复制 —— 报错信息
+                // 只有用户能复制出来，才有办法排查。
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Column {
+                        lines.forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = when {
+                                    line.startsWith("✓") -> MaterialTheme.colorScheme.primary
+                                    line.startsWith("✗") -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                            Spacer(Modifier.height(4.dp))
+                        }
+                    }
                 }
+                Spacer(Modifier.height(PcTokens.SpaceS))
+                // 报错文字在手机上没法长按选中（Text 默认不可选），
+                // 给一个整份复制按钮，用户能直接贴给别人看。
+                OutlinedButton(
+                    onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                        cm.setPrimaryClip(
+                            android.content.ClipData.newPlainText(
+                                "AIHub 诊断", (reportText ?: "").ifBlank { lines.joinToString("\n") }
+                            )
+                        )
+                        claimResult = "报告已复制到剪贴板"
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("复制完整报告") }
             }
         }
     }

@@ -47,14 +47,26 @@ class QoderClaim(private val personalToken: String) {
      * 而且账号属于哪个区是既成事实，探测比询问更可靠。
      */
     fun listCampaigns(): Result {
-        var lastError = ""
+        // 逐区记录失败原因，而不是只留最后一个。
+        // 之前只保留 lastError，导致用户看到的是最后尝试的国内版 401，
+        // 完全看不到国际版返回了什么 —— 而这恰恰是判断的关键。
+        val attempts = ArrayList<String>()
         for (base in BASES) {
             val r = runCatching { fetchCampaigns(base) }
-            r.onSuccess { return Result(true, "活动列表来自 $base", campaigns = it) }
-            lastError = r.exceptionOrNull()?.message ?: "未知错误"
+            r.onSuccess { return Result(true, "活动列表来自 ${hostOf(base)}", campaigns = it) }
+            val msg = r.exceptionOrNull()?.message ?: "未知错误"
+            attempts += "  ${hostOf(base)} → $msg"
+            // 401 说明该区域认得这个接口但拒绝了这个 token（区域不匹配）；
+            // 404 说明该区域根本没这个接口。两者含义不同，都记下来。
         }
-        return Result(false, "所有区域都无法获取活动列表：$lastError")
+        return Result(false, buildString {
+            append("所有区域都无法获取活动列表：")
+            append(attempts.joinToString("\n"))
+        })
     }
+
+    private fun hostOf(base: String): String =
+        base.removePrefix("https://").substringBefore('/')
 
     /** 领取所有可领的活动。 */
     fun claimAll(): Result {
