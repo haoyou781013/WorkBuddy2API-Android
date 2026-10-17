@@ -9,15 +9,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -33,6 +33,16 @@ import java.util.Locale
  * 为什么必须区分"签到"和"奖励"两类：
  *   上游只提供当前余额快照，没有任何流水接口。若不本地分类记账，
  *   用户看到的永远只是一个总数，无法回答"签到到底给没给分"。
+ *
+ * 【M3 移植】Miuix 的 WindowDialog 无条件渲染语义（show 参数在内部生效），
+ *   M3 的 AlertDialog 改由外层 if 控制。此处调用点（AccountsScreen）已在
+ *   if (showCreditDetail) 内渲染，所以弹窗自身不需要再包一层。
+ *   原自由布局的三个动作（刷新 / 清空账本 / 关闭）落到具名插槽：
+ *   主要操作「关闭」放 confirmButton，「刷新」「清空账本」放 dismissButton 一行。
+ *   注意「清空账本」是破坏性操作，但它是原布局里的次要按钮之一，
+ *   这里保持原有语义与位置，不自行升级为强调样式。
+ * 【M3 移植】滚动容器保留：内容段数由上游 JSON 决定，可能很长，
+ *   heightIn(max) + verticalScroll 的原策略不变。
  */
 @Composable
 fun CreditDetailDialog(
@@ -42,38 +52,34 @@ fun CreditDetailDialog(
     onRefresh: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    WindowDialog(
-        show = true,
-        title = "积分详情 · $accountName",
+    AlertDialog(
         onDismissRequest = onDismiss,
-        content = {
-            Column(Modifier.fillMaxWidth()) {
-                Column(
-                    Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())
-                ) {
-                    if (detail == null) {
-                        Text("读取中…", style = MiuixTheme.textStyles.main)
-                    } else {
-                        BalanceSection(detail)
-                        Spacer(Modifier.height(PcTokens.SpaceM))
-                        LedgerSummarySection(detail)
-                        Spacer(Modifier.height(PcTokens.SpaceM))
-                        PackagesSection(detail)
-                        Spacer(Modifier.height(PcTokens.SpaceM))
-                        LedgerEntriesSection(detail)
-                    }
+        title = { Text("积分详情 · $accountName") },
+        text = {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+            ) {
+                if (detail == null) {
+                    Text("读取中…", style = MaterialTheme.typography.bodyLarge)
+                } else {
+                    BalanceSection(detail)
+                    Spacer(Modifier.height(PcTokens.SpaceM))
+                    LedgerSummarySection(detail)
+                    Spacer(Modifier.height(PcTokens.SpaceM))
+                    PackagesSection(detail)
+                    Spacer(Modifier.height(PcTokens.SpaceM))
+                    LedgerEntriesSection(detail)
                 }
-                Spacer(Modifier.height(PcTokens.SpaceM))
-                // 三个动作：刷新（重新拉上游）、清空账本（重置本地统计）、关闭
-                Row(horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
-                    top.yukonga.miuix.kmp.basic.TextButton(
-                        text = "刷新", onClick = onRefresh, modifier = Modifier.weight(1f)
-                    )
-                    top.yukonga.miuix.kmp.basic.TextButton(
-                        text = "清空账本", onClick = onClearLedger, modifier = Modifier.weight(1f)
-                    )
-                    Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("关闭") }
-                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+        // 三个动作：刷新（重新拉上游）、清空账本（重置本地统计）、关闭
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
+                TextButton(onClick = onRefresh) { Text("刷新") }
+                TextButton(onClick = onClearLedger) { Text("清空账本") }
             }
         }
     )
@@ -82,7 +88,11 @@ fun CreditDetailDialog(
 /** ① 实时余额段。 */
 @Composable
 private fun BalanceSection(detail: JSONObject) {
-    Text("当前余额", style = MiuixTheme.textStyles.main, color = MiuixTheme.colorScheme.primary)
+    Text(
+        "当前余额",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.primary
+    )
     Spacer(Modifier.height(PcTokens.SpaceS / 2))
     val remaining = detail.optDouble("remaining", 0.0)
     val total = detail.optDouble("total", 0.0)
@@ -99,8 +109,8 @@ private fun BalanceSection(detail: JSONObject) {
         Spacer(Modifier.height(PcTokens.SpaceS / 2))
         Text(
             "上游刷新失败，以下为本地缓存值：$refreshError",
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.error
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
         )
     }
 }
@@ -109,7 +119,11 @@ private fun BalanceSection(detail: JSONObject) {
 @Composable
 private fun LedgerSummarySection(detail: JSONObject) {
     val summary = detail.optJSONObject("ledger_summary") ?: return
-    Text("积分来源（本地记账）", style = MiuixTheme.textStyles.main, color = MiuixTheme.colorScheme.primary)
+    Text(
+        "积分来源（本地记账）",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.primary
+    )
     Spacer(Modifier.height(PcTokens.SpaceS / 2))
     PcInfoRow(
         "今日获得 / 消耗",
@@ -140,8 +154,8 @@ private fun LedgerSummarySection(detail: JSONObject) {
     if (!shown) {
         Text(
             "暂无记账。签到或领奖产生积分变动后，这里会按来源分类统计。",
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -152,8 +166,9 @@ private fun PackagesSection(detail: JSONObject) {
     val packages = detail.optJSONArray("packages") ?: return
     if (packages.length() == 0) return
     Spacer(Modifier.height(PcTokens.SpaceS))
-    Text("额度构成（${packages.length()} 个资源包）", style = MiuixTheme.textStyles.main,
-        color = MiuixTheme.colorScheme.primary)
+    Text("额度构成（${packages.length()} 个资源包）",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.primary)
     Spacer(Modifier.height(PcTokens.SpaceS / 2))
     for (i in 0 until packages.length()) {
         val p = packages.optJSONObject(i) ?: continue
@@ -169,8 +184,8 @@ private fun PackagesSection(detail: JSONObject) {
             "$kind：${"%.1f".format(remain)} / ${"%.1f".format(totalP)}" +
                 (expiry?.let { "　到期 ${formatTime(it.toLong())}" } ?: "") +
                 (p.optString("ProductCode").takeIf { it.isNotBlank() }?.let { "　[$it]" } ?: ""),
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(2.dp))
     }
@@ -181,14 +196,15 @@ private fun PackagesSection(detail: JSONObject) {
 private fun LedgerEntriesSection(detail: JSONObject) {
     val ledger = detail.optJSONArray("ledger") ?: return
     Spacer(Modifier.height(PcTokens.SpaceS))
-    Text("明细（最近 ${minOf(ledger.length(), 30)} 条）", style = MiuixTheme.textStyles.main,
-        color = MiuixTheme.colorScheme.primary)
+    Text("明细（最近 ${minOf(ledger.length(), 30)} 条）",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.primary)
     Spacer(Modifier.height(PcTokens.SpaceS / 2))
     if (ledger.length() == 0) {
         Text(
             "暂无记录。账本只记录确实算出资数额的变动（签到不发分时不会留下 0 值记录）。",
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         return
     }
@@ -209,10 +225,10 @@ private fun LedgerEntriesSection(detail: JSONObject) {
             "${fmt.format(Date((e.optDouble("ts", 0.0) * 1000).toLong()))}　$kindLabel　" +
                 "$sign${"%.1f".format(kotlin.math.abs(amount))}" +
                 (e.optString("note").takeIf { it.isNotBlank() }?.let { "　$it" } ?: ""),
-            style = MiuixTheme.textStyles.body2,
+            style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
-            color = if (amount >= 0) MiuixTheme.colorScheme.onSurfaceVariantSummary
-            else MiuixTheme.colorScheme.error
+            color = if (amount >= 0) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.error
         )
         Spacer(Modifier.height(2.dp))
     }

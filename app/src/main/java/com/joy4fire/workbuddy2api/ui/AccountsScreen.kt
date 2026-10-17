@@ -14,6 +14,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,17 +32,10 @@ import com.joy4fire.workbuddy2api.AccountRegion
 import com.joy4fire.workbuddy2api.FormatKit
 import com.joy4fire.workbuddy2api.NativeCore
 import com.joy4fire.workbuddy2api.OAuthWebActivity
+import com.joy4fire.workbuddy2api.m3.SectionTitle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
-import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Slider
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 账号页 —— 对应原界面 accountsPage()。
@@ -143,8 +141,8 @@ fun AccountsScreen(context: Context, app: AppState) {
                 Text(
                     "「切换账号登录」会先清空登录态，用于在同一设备上登录第二个账号；" +
                         "导入支持 WorkBuddy / CodeBuddy 的 .info 与 JSON 认证文件。",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -154,13 +152,13 @@ fun AccountsScreen(context: Context, app: AppState) {
                 PcCard(title = "尚未连接账号") {
                     Text(
                         "在 App 内置窗口完成登录（不跳浏览器），或导入 WorkBuddy / CodeBuddy 的 .info、JSON 文件。",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         } else {
-            item { SmallTitle(text = "账号池 · ${app.accounts.length()} 个") }
+            item { SectionTitle(text = "账号池 · ${app.accounts.length()} 个") }
             items(app.accounts.length()) { index ->
                 val account = app.accounts.optJSONObject(index) ?: return@items
                 val uid = account.optString("uid")
@@ -197,7 +195,7 @@ fun AccountsScreen(context: Context, app: AppState) {
         }
 
         // ---------------- 批量操作 ----------------
-        item { SmallTitle(text = "账号操作") }
+        item { SectionTitle(text = "账号操作") }
         item {
             PcCard {
                 Button(
@@ -207,15 +205,14 @@ fun AccountsScreen(context: Context, app: AppState) {
                 ) { Text(if (app.busy) "刷新中…" else "刷新全部账号额度") }
                 Spacer(Modifier.height(PcTokens.SpaceS))
                 TextButton(
-                    text = "为全部启用的国内账号签到",
                     onClick = { app.checkInAll() },
                     modifier = Modifier.fillMaxWidth()
-                )
+                ) { Text("为全部启用的国内账号签到") }
                 Spacer(Modifier.height(PcTokens.SpaceS))
                 Text(
                     "额度会按账号逐个刷新并汇总；批量签到只处理国内账号，国际版额度由上游自动发放。",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -223,24 +220,24 @@ fun AccountsScreen(context: Context, app: AppState) {
         // ---------------- 额度汇总 ----------------
         val summary = app.credits
         if (summary != null && summary.optInt("known") > 0) {
-            item { SmallTitle(text = "额度汇总") }
+            item { SectionTitle(text = "额度汇总") }
             item {
                 PcCard {
                     Text(
                         "${FormatKit.credits(summary.optDouble("remain"))} / ${FormatKit.credits(summary.optDouble("total"))} 积分",
-                        style = MiuixTheme.textStyles.title3,
-                        color = MiuixTheme.colorScheme.primary
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(Modifier.height(PcTokens.SpaceS / 2))
                     Text(
                         "已汇总 ${summary.optInt("known")} / ${summary.optInt("accounts")} 个账号",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     val total = summary.optDouble("total")
                     val ratio = if (total > 0) (summary.optDouble("remain") / total).toFloat().coerceIn(0f, 1f) else 0f
                     Spacer(Modifier.height(PcTokens.SpaceS))
-                    LinearProgressIndicator(progress = ratio, modifier = Modifier.fillMaxWidth())
+                    LinearProgressIndicator(progress = { ratio }, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
@@ -248,7 +245,7 @@ fun AccountsScreen(context: Context, app: AppState) {
         // ---------------- 签到结果 ----------------
         app.checkinResults?.let { results ->
             if (results.length() > 0) {
-                item { SmallTitle(text = "最近签到结果") }
+                item { SectionTitle(text = "最近签到结果") }
                 items(results.length()) { index ->
                     val result = results.optJSONObject(index) ?: return@items
                     // 状态文案要区分三种"没签到"的原因，否则用户无法判断
@@ -264,26 +261,23 @@ fun AccountsScreen(context: Context, app: AppState) {
                         result.optBoolean("ok") -> "签到成功"
                         else -> "签到失败"
                     }
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
-                        insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)
-                    ) {
+                    PcCard(insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)) {
                         Column {
                             Text(
                                 FormatKit.accountName(result.optString("nickname"), result.optString("uid")),
-                                style = MiuixTheme.textStyles.main
+                                style = MaterialTheme.typography.bodyLarge
                             )
                             Spacer(Modifier.height(PcTokens.SpaceS / 2))
                             Text(
                                 "$status · UID ${FormatKit.shortUid(result.optString("uid"))}",
-                                style = MiuixTheme.textStyles.body2,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (result.optString("message").isNotBlank()) {
                                 Text(
                                     result.optString("message"),
-                                    style = MiuixTheme.textStyles.body2,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             // 本次到账的积分单独一行高亮：这是签到最核心的结果，
@@ -293,8 +287,8 @@ fun AccountsScreen(context: Context, app: AppState) {
                                 if (gained != 0.0) {
                                     Text(
                                         "本次 " + if (gained > 0) "+%.1f".format(gained) else "%.1f".format(gained) + " 积分",
-                                        style = MiuixTheme.textStyles.main,
-                                        color = if (gained > 0) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.error
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = if (gained > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                                     )
                                 }
                             }
@@ -356,21 +350,18 @@ private fun AccountCard(
     var showPriority by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
-        insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)
-    ) {
+    PcCard(insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)) {
         Column {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text(nickname, style = MiuixTheme.textStyles.main, modifier = Modifier.weight(1f))
+                Text(nickname, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                 Text(
                     when {
                         healthy -> "● 健康"
                         enabled -> "冷却"
                         else -> "已停用"
                     },
-                    style = MiuixTheme.textStyles.body2,
-                    color = if (healthy) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (healthy) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.height(PcTokens.SpaceS))

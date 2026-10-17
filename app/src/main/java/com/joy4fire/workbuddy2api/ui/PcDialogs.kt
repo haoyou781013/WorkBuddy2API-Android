@@ -2,38 +2,47 @@ package com.joy4fire.workbuddy2api.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
 
 /**
- * Miuix 对话框封装 —— 替代原界面里十几个 `AlertDialog.Builder` 调用。
+ * 对话框封装 —— 替代原界面里十几个 `AlertDialog.Builder` 调用。
  *
- * 为什么用 WindowDialog 而不是 OverlayDialog：
+ * 【Material 3 移植】原先基于 Miuix 的 WindowDialog，现在全部换成 M3 的 AlertDialog。
+ *   换用 WindowDialog 的原因（见下）已随 Miuix 一起消失，但结论仍然记在这里备查：
+ *
+ * 为什么当年用 WindowDialog 而不是 OverlayDialog：
  * OverlayDialog 走 MiuixPopupHost → DialogContentLayout → NavigationBackHandler，
  * 在纯 Compose 且宿主未提供 NavigationEventDispatcherOwner 时会抛
  * "No NavigationEventDispatcher was provided"。
  * WindowDialog 直接基于 Compose 的 window Dialog（它的源码里 0 处 BackHandler），
  * 完全绕开这条依赖链，是零崩溃风险的选项。返回键关闭由系统 Dialog 自身承担。
+ * M3 的 AlertDialog 同样直接走 Compose 的 window Dialog、不依赖该 owner，所以这条
+ * 「零崩溃风险」的性质被完整继承。
  *
  * 另：OverlayDialog / WindowDialog 都【没有】buttons 参数，按钮要写进 content 里，
- * 这是 Miuix 的设计（content 即整个对话框体）。下方各封装已按此约定处理。
+ * 这是 Miuix 的设计（content 即整个对话框体）。M3 的 AlertDialog 反过来 ——
+ * 按钮走具名的 confirmButton / dismissButton 插槽，所以各封装已按插槽重新分配；
+ * 底部按钮行原本手写的 weight(1f) 等分宽度一并去掉：M3 规格是按钮右对齐、
+ * 由组件统一负责间距，不需要也不应该由调用方平分。
+ *
+ * 【调用点无需改动】这里刻意保留了 `show: Boolean` 参数（原签名不动），
+ * 内部用 `if (show)` 条件渲染来适配 AlertDialog 没有 show 参数这件事。
+ * 如果反过来删掉 show 参数、要求调用点自己加 `if`，就会强制修改 11 处调用点的签名。
  */
 @Composable
 fun PcConfirmDialog(
@@ -45,26 +54,26 @@ fun PcConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    WindowDialog(
-        show = show,
-        title = title,
-        onDismissRequest = onDismiss,
-        content = {
-            Column(Modifier.fillMaxWidth()) {
+    if (show) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(title) },
+            text = {
                 // 正文可能很长（保活检查报告等），限高 + 滚动，避免撑出屏幕导致按钮点不到。
                 Column(
                     Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState())
                 ) {
-                    Text(message, style = MiuixTheme.textStyles.main)
+                    Text(message, style = MaterialTheme.typography.bodyLarge)
                 }
-                Spacer(Modifier.height(PcTokens.SpaceM))
-                Row(horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
-                    TextButton(text = dismissText, onClick = onDismiss, modifier = Modifier.weight(1f))
-                    Button(onClick = onConfirm, modifier = Modifier.weight(1f)) { Text(confirmText) }
-                }
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirm) { Text(confirmText) }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text(dismissText) }
             }
-        }
-    )
+        )
+    }
 }
 
 /** 只有「知道了」的提示框。 */
@@ -76,22 +85,22 @@ fun PcAlertDialog(
     buttonText: String = "知道了",
     onDismiss: () -> Unit
 ) {
-    WindowDialog(
-        show = show,
-        title = title,
-        onDismissRequest = onDismiss,
-        content = {
-            Column(Modifier.fillMaxWidth()) {
+    if (show) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(title) },
+            text = {
                 Column(
                     Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState())
                 ) {
-                    Text(message, style = MiuixTheme.textStyles.main)
+                    Text(message, style = MaterialTheme.typography.bodyLarge)
                 }
-                Spacer(Modifier.height(PcTokens.SpaceM))
-                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text(buttonText) }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text(buttonText) }
             }
-        }
-    )
+        )
+    }
 }
 
 /**
@@ -112,30 +121,37 @@ fun PcInputDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    WindowDialog(
-        show = show,
-        title = title,
-        onDismissRequest = onDismiss,
-        content = {
-            Column(Modifier.fillMaxWidth()) {
-                TextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    label = label,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (errorText != null) {
-                    Spacer(Modifier.height(PcTokens.SpaceS))
-                    Text(errorText, style = MiuixTheme.textStyles.body2, color = MiuixTheme.colorScheme.error)
+    if (show) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(title) },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = onValueChange,
+                        label = { Text(label) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    if (errorText != null) {
+                        Spacer(Modifier.height(PcTokens.SpaceS))
+                        Text(
+                            errorText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
-                Spacer(Modifier.height(PcTokens.SpaceM))
-                Row(horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
-                    TextButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f))
-                    Button(onClick = onConfirm, modifier = Modifier.weight(1f)) { Text(confirmText) }
-                }
+            },
+            confirmButton = {
+                TextButton(onClick = onConfirm) { Text(confirmText) }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("取消") }
             }
-        }
-    )
+        )
+    }
 }
 
 /**
@@ -171,35 +187,34 @@ fun PcDetailDialog(
             "\n\n… 已省略 ${body.length - DETAIL_DISPLAY_LIMIT} 字符（共 ${body.length} 字符）\n" +
             "点击下方「${copyLabel ?: "复制"}」可获取完整内容。"
     }
-    WindowDialog(
-        show = show,
-        title = title,
-        onDismissRequest = onDismiss,
-        content = {
-            Column(Modifier.fillMaxWidth()) {
+    if (show) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(title) },
+            text = {
                 Column(
                     Modifier.fillMaxWidth().heightIn(max = 380.dp).verticalScroll(rememberScrollState())
                 ) {
                     Text(
                         text = display,
-                        style = MiuixTheme.textStyles.body2,
+                        style = MaterialTheme.typography.bodySmall,
                         fontFamily = if (mono) FontFamily.Monospace else null
                     )
                 }
-                Spacer(Modifier.height(PcTokens.SpaceM))
-                Row(horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
-                    if (onCopy != null) {
-                        TextButton(
-                            text = copyLabel ?: "复制",
-                            onClick = onCopy,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("关闭") }
-                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            },
+            // 只有存在复制回调时才提供 dismissButton 插槽。
+            // 断言依据：M3 的 dismissButton 是【非空】的可选参数（默认 { }），
+            // 所以不能写 `dismissButton = if (...) {...} else null` —— 传 null 编译不过。
+            dismissButton = if (onCopy != null) {
+                { TextButton(onClick = onCopy) { Text(copyLabel ?: "复制") } }
+            } else {
+                {}
             }
-        }
-    )
+        )
+    }
 }
 
 /** 明细弹窗的渲染长度上限（字符）。超过则截断显示，但不影响复制全文。 */

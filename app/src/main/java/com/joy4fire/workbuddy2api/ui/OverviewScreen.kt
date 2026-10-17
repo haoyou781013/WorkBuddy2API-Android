@@ -10,17 +10,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.joy4fire.workbuddy2api.ApiHostService
 import com.joy4fire.workbuddy2api.FormatKit
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.joy4fire.workbuddy2api.m3.SectionTitle
 
 /**
  * 概览页 —— 对应原界面 overviewPage()。
@@ -51,11 +49,11 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                             starting -> "◐  启动中…"
                             else -> "○  已停止"
                         },
-                        style = MiuixTheme.textStyles.main,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = when {
-                            running -> MiuixTheme.colorScheme.primary
-                            starting -> MiuixTheme.colorScheme.primary
-                            else -> MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            running -> MaterialTheme.colorScheme.primary
+                            starting -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
                         },
                         modifier = Modifier.weight(1f)
                     )
@@ -65,8 +63,8 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                             starting -> "预热中"
                             else -> "离线"
                         },
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.height(PcTokens.SpaceS))
@@ -76,8 +74,8 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                         starting -> "正在校验账号并预热模型，通常数秒内完成；若长时间无变化，请检查通知权限。"
                         else -> "启动后仅在本机提供 OpenAI 兼容 API。"
                     },
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(PcTokens.SpaceM))
                 PcActionGrid(
@@ -121,10 +119,10 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
 
         // ---------------- 账号额度 ----------------
         if (app.accounts.length() > 0) {
-            item { top.yukonga.miuix.kmp.basic.SmallTitle(text = "账号额度") }
+            item { SectionTitle(text = "账号额度") }
             items(app.accounts.length()) { index ->
                 val item = app.accounts.optJSONObject(index) ?: return@items
-                Card(
+                PcCard(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
                     insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)
                 ) {
@@ -132,29 +130,29 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             Text(
                                 FormatKit.accountName(item.optString("nickname"), item.optString("uid")),
-                                style = MiuixTheme.textStyles.main,
+                                style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.weight(1f)
                             )
                             Text(
                                 if (item.optBoolean("enabled", true)) "已启用" else "已停用",
-                                style = MiuixTheme.textStyles.body2,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(Modifier.height(PcTokens.SpaceS / 2))
                         Text(
                             "UID ${FormatKit.shortUid(item.optString("uid"))}",
-                            style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(PcTokens.SpaceS / 2))
                         Text(
                             if (item.isNull("credits_remaining")) "额度尚未刷新"
                             else "剩余 ${FormatKit.credits(item.optDouble("credits_remaining"))} / " +
                                 "总计 ${FormatKit.credits(item.optDouble("credits_total"))} 积分",
-                            style = MiuixTheme.textStyles.main,
-                            color = if (item.isNull("credits_remaining")) MiuixTheme.colorScheme.onSurfaceVariantSummary
-                            else MiuixTheme.colorScheme.primary
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (item.isNull("credits_remaining")) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -162,20 +160,20 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
         }
 
         // ---------------- 开始使用 ----------------
-        item { top.yukonga.miuix.kmp.basic.SmallTitle(text = "开始使用") }
+        item { SectionTitle(text = "开始使用") }
         item {
             PcCard {
                 val first = app.accounts.optJSONObject(0)
                 Text(
                     if (first == null) "连接 WorkBuddy 账号" else "${first.optString("nickname", "账号")} 已就绪",
-                    style = MiuixTheme.textStyles.main
+                    style = MaterialTheme.typography.bodyLarge
                 )
                 Spacer(Modifier.height(PcTokens.SpaceS / 2))
                 Text(
                     if (first == null) "先登录或导入 auth 文件，再启动本地服务。"
                     else "可直接启动服务，或刷新额度和模型目录。",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(PcTokens.SpaceM))
                 PcActionGrid(
@@ -190,27 +188,27 @@ fun OverviewScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
         }
 
         // ---------------- 最近活动 ----------------
-        item { top.yukonga.miuix.kmp.basic.SmallTitle(text = "最近活动") }
+        item { SectionTitle(text = "最近活动") }
         if (app.events.isEmpty()) {
             item {
                 PcCard {
                     Text(
                         "暂无活动。启动服务、刷新模型或管理账号后，操作结果会显示在这里。",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         } else {
             items(minOf(5, app.events.size)) { index ->
-                Card(
+                PcCard(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
                     insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceS)
                 ) {
                     Text(
                         app.events.getOrNull(index).orEmpty(),
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

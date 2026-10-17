@@ -11,24 +11,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.basic.HorizontalDivider
-import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * Miuix 布局基元 —— 全 App 统一的间距与卡片样式来源。
+ * 布局基元 —— 全 App 统一的间距与卡片样式来源。
+ *
+ * 【Material 3 移植说明】
+ *   本文件原先是「Miuix 布局基元」，是所有页面的公共依赖（PcCard/PcRow/PcDivider/
+ *   PcInfoRow/PcMonoRow/PcActionGrid/PcTokens/PcAction）。
+ *   移植到 Material 3 时**只替换了组件实现，没有改任何布局意图** ——
+ *   下面所有关于间距/对齐/折行策略的注释都是原作者踩坑后的判断，逐条保留。
  *
  * 为什么单独抽这一层，以及各值为什么是这些数：
  *   Miuix 的 Card 默认 insideMargin 是 0.dp（见 CardDefaults.InsideMargin），
@@ -58,7 +65,12 @@ object PcTokens {
 /**
  * 统一卡片容器。
  *
- * @param title 卡片标题（非空时用 SmallTitle 渲染，并与卡片保持 [PcTokens.TitleGap] 间隙）
+ * 【M3 移植】用 ElevatedCard（elevation 1dp）而不是 filled Card：
+ *   M3 的 filled card 在浅色背景下与 surface 几乎无区分，
+ *   而本应用是「浅色大背景 + 多张同色卡片」的布局，需要卡片有可辨识的浮起感。
+ *   圆角 12dp 是 M3 官方规格值。
+ *
+ * @param title 卡片标题（非空时渲染标题，并与卡片保持 [PcTokens.TitleGap] 间隙）
  */
 @Composable
 fun PcCard(
@@ -72,14 +84,34 @@ fun PcCard(
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         if (title != null) {
-            SmallTitle(text = title, modifier = Modifier.padding(bottom = PcTokens.TitleGap))
+            // 卡片标题：M3 的 Title Small（14sp/500）。
+            // 不用 Headline 级别 —— 这个位置是分组标题，压过页面主标题会破坏层级。
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(
+                    start = PcTokens.PageGutter,
+                    end = PcTokens.PageGutter,
+                    bottom = PcTokens.TitleGap
+                )
+            )
         }
-        Card(
+        // innerPadding 用 Modifier.padding 而非 Card 的 contentPadding 参数：
+        // Material3 的 Card 没有 insideMargin 概念，内容 padding 只能自己加。
+        ElevatedCard(
             modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
-            insideMargin = insideMargin,
-            colors = CardDefaults.defaultColors()
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.elevatedCardColors(),
+            elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp)
         ) {
-            content()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(insideMargin),
+                content = content
+            )
         }
     }
 }
@@ -118,7 +150,9 @@ private fun PcRowInner(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = MiuixTheme.textStyles.main,
+                // M3 的 Body Large（16sp/400）：这是列表项主文本，
+                // 在 48dp+ 的行高下用 Body Large 才符合 M3 列表项规格。
+                style = MaterialTheme.typography.bodyLarge,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -126,8 +160,10 @@ private fun PcRowInner(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = summary,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    // M3 的 Body Small（12sp/400）+ onSurfaceVariant。
+                    // M3 规定小号文本对比度需 ≥4.5:1，该配色在中性表面上满足。
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -137,8 +173,12 @@ private fun PcRowInner(
             Spacer(Modifier.width(PcTokens.SpaceM))
             Text(
                 text = value,
-                style = MiuixTheme.textStyles.main,
-                color = if (valueColor == Color.Unspecified) MiuixTheme.colorScheme.onSurfaceVariantSummary else valueColor
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (valueColor == Color.Unspecified) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    valueColor
+                }
             )
         }
         if (trailing != null) {
@@ -151,8 +191,9 @@ private fun PcRowInner(
 /**
  * 卡片内分割线。
  *
- * 取消原先上下各 5dp 的 padding：Miuix 的 HorizontalDivider 自带 margin，
- * 再叠加会让行间距忽大忽小；这里交给使用方在需要时自行加 Spacer。
+ * 【M3 移植】Miuix 的 HorizontalDivider 自带 margin，Material3 的 HorizontalDivider
+ * 没有额外 margin —— 所以原先「取消上下 padding 避免双重缩进」的处理现在天然成立，
+ * 使用方需要间距时自行加 Spacer（与原约定一致）。
  */
 @Composable
 fun PcDivider(modifier: Modifier = Modifier) {
@@ -180,15 +221,15 @@ fun PcInfoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            style = MiuixTheme.textStyles.main,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             // 固定标签列宽：保证卡片内各行标签左对齐成列，且短标签不会被压成竖排。
             modifier = Modifier.width(96.dp)
         )
         Spacer(Modifier.width(PcTokens.SpaceS))
         Text(
             text = value,
-            style = MiuixTheme.textStyles.main,
+            style = MaterialTheme.typography.bodyLarge,
             // 值占剩余宽度并允许换行（长 UID、长 URL 都需要）
             modifier = Modifier.weight(1f)
         )
@@ -207,14 +248,14 @@ fun PcMonoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            style = MiuixTheme.textStyles.main,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(96.dp)
         )
         Spacer(Modifier.width(PcTokens.SpaceS))
         Text(
             text = value,
-            style = MiuixTheme.textStyles.body2,
+            style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier.weight(1f)
         )
@@ -224,12 +265,15 @@ fun PcMonoRow(label: String, value: String) {
 /**
  * 卡片内动作按钮组的统一布局。
  *
- * 为什么需要它：Miuix 的 Button/TextButton 默认 minWidth 58dp、minHeight 40dp，
- * 直接放进 Row 而不给间距时，相邻按钮会紧贴成一坨（用户反馈"功能键融一块"）；
+ * 为什么需要它：按钮默认 minWidth/minHeight 较大，直接放进 Row 而不给间距时，
+ * 相邻按钮会紧贴成一坨（用户反馈"功能键融一块"）；
  * 而按钮数量超过 3 个又硬塞一行，会把文字压到换行。
  *
  * 这里统一为：最多每行 2 个，等宽平分，行间与列间都有固定间距。
  * 传入的 actions 按顺序自动折行。
+ *
+ * 【M3 移植注意】Material3 的 TextButton 没有 `text =` 参数（Miuix 有），
+ * 内容要作为尾随 lambda 传入。这是本次移植里唯一的签名差异。
  *
  * @param actions 每个元素是 (文案, 是否主按钮, 是否可用, 点击)
  */
@@ -238,7 +282,10 @@ fun PcActionGrid(
     actions: List<PcAction>,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)
+    ) {
         // chunked(2)：每行最多两个。3 个按钮时最后一行只有一个，用 weight(1f) + 空占位
         // 把它留在左侧，避免单个按钮被拉成整行宽（视觉上像另一个标题）。
         actions.chunked(2).forEach { row ->
@@ -255,11 +302,10 @@ fun PcActionGrid(
                         ) { Text(action.label) }
                     } else {
                         TextButton(
-                            text = action.label,
                             onClick = action.onClick,
                             enabled = action.enabled,
                             modifier = Modifier.weight(1f)
-                        )
+                        ) { Text(action.label) }
                     }
                 }
                 // 奇数个时补一个不可见的等宽占位，保持按钮宽度一致

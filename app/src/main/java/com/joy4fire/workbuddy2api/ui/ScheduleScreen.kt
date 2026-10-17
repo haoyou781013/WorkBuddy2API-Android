@@ -8,8 +8,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 
 /**
  * 定时参数二级页 —— 承接原先铺在设置页首屏的四项数值配置。
@@ -61,8 +61,8 @@ fun ScheduleScreen(context: Context, app: AppState) {
                 Text(
                     "参数会立即生效，无需重启服务。签到时段用于账号保活任务，" +
                         "到点后会自动为国内版账号签到。",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

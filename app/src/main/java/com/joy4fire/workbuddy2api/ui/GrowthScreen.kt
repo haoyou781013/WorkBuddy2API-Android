@@ -4,13 +4,16 @@ import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,23 +21,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.joy4fire.workbuddy2api.GrowthFacade
+import com.joy4fire.workbuddy2api.m3.SectionTitle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
-import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * 成长中心页 —— 对应 1.2.7 的「成长任务」界面。
@@ -43,6 +39,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  *   IllegalArgumentException: Key "" was already used
  * 因为上游可能返回重复 task_code 或空 code。改成「索引 + code」组合，
  * 保证唯一且稳定（索引在刷新前后对同一位置的项保持不变，不会引起无谓重排）。
+ *
+ * 【Miuix → Material 3 移植】：只改 UI 组件与主题 token，
+ *   状态管理、回调签名、数据流、协程调度一律未动。
  */
 @Composable
 fun GrowthScreen(context: Context, accountKey: String?) {
@@ -99,7 +98,7 @@ fun GrowthScreen(context: Context, accountKey: String?) {
         PcCard(title = "成长中心") {
             Text(
                 "请先在「账号」页登录一个账号。成长任务与每日福利都按账号结算。",
-                style = MiuixTheme.textStyles.main
+                style = MaterialTheme.typography.bodyLarge
             )
         }
         return
@@ -131,26 +130,26 @@ fun GrowthScreen(context: Context, accountKey: String?) {
             PcCard(title = "今日可领") {
                 val s = summary
                 when {
-                    s == null && error == null -> Text("加载中…", style = MiuixTheme.textStyles.main)
-                    s == null -> Text("加载失败：$error", style = MiuixTheme.textStyles.main,
-                        color = MiuixTheme.colorScheme.error)
+                    s == null && error == null -> Text("加载中…", style = MaterialTheme.typography.bodyLarge)
+                    s == null -> Text("加载失败：$error", style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error)
                     // 国际版同样有成长任务，不能再显示"无成长体系"这种与下方任务列表
                     // 自相矛盾的文案；改为与国内版一致地展示 claimable 清单。
                     else -> {
                         val arr = s.optJSONArray("claimable")
                         if (arr == null || arr.length() == 0) {
                             Text("当前没有可领项，下方列表可执行任务。",
-                                style = MiuixTheme.textStyles.main)
+                                style = MaterialTheme.typography.bodyLarge)
                         } else {
                             for (i in 0 until arr.length()) {
-                                Text("· ${arr.optString(i)}", style = MiuixTheme.textStyles.main)
+                                Text("· ${arr.optString(i)}", style = MaterialTheme.typography.bodyLarge)
                             }
                         }
                         s.optJSONArray("errors")?.takeIf { it.length() > 0 }?.let { errs ->
                             Spacer(Modifier.height(PcTokens.SpaceS))
                             for (i in 0 until errs.length()) {
-                                Text("⚠ ${errs.optString(i)}", style = MiuixTheme.textStyles.body2,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                                Text("⚠ ${errs.optString(i)}", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -199,8 +198,8 @@ fun GrowthScreen(context: Context, accountKey: String?) {
                 )
                 if (statusText.isNotEmpty()) {
                     Spacer(Modifier.height(PcTokens.SpaceM))
-                    Text(statusText, style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    Text(statusText, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (logs.isNotEmpty()) {
                     Spacer(Modifier.height(PcTokens.SpaceS))
@@ -210,14 +209,14 @@ fun GrowthScreen(context: Context, accountKey: String?) {
                     if (creditLine != null) {
                         Text(
                             creditLine.substringAfter('：'),
-                            style = MiuixTheme.textStyles.main,
-                            color = MiuixTheme.colorScheme.primary
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(Modifier.height(PcTokens.SpaceS / 2))
                     }
                     logs.filterNot { it.contains("积分汇总") }.takeLast(14).forEach { line ->
-                        Text(line, style = MiuixTheme.textStyles.body2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        Text(line, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -226,7 +225,7 @@ fun GrowthScreen(context: Context, accountKey: String?) {
 
         // ---------------- 任务清单 ----------------
         if (tasks.isNotEmpty()) {
-            item { SmallTitle(text = "成长任务（${tasks.size}）") }
+            item { SectionTitle(text = "成长任务（${tasks.size}）") }
             items(tasks.size, key = { tasks[it].id }) { index ->
                 GrowthTaskCard(
                     task = tasks[index],
@@ -254,25 +253,27 @@ fun GrowthScreen(context: Context, accountKey: String?) {
 /** 单个任务卡：标题、进度、奖励、动作按钮。 */
 @Composable
 private fun GrowthTaskCard(task: GrowthTaskRow, onClaim: () -> Unit, onRun: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
+    // 【M3 移植】原 Miuix Card(insideMargin=...) 改为 PcCard：
+    //   内边距语义等价（卡片左右 16dp、上下 14dp），并且与全 App 其它卡片同源。
+    PcCard(
+        modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)
     ) {
         Column {
-            Text(task.title.ifBlank { task.code }, style = MiuixTheme.textStyles.main)
+            Text(task.title.ifBlank { task.code }, style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(2.dp))
             Text(
                 task.code,
-                style = MiuixTheme.textStyles.body2,
+                style = MaterialTheme.typography.bodySmall,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (task.description.isNotBlank()) {
                 Spacer(Modifier.height(PcTokens.SpaceS / 2))
                 Text(
                     task.description,
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -284,17 +285,22 @@ private fun GrowthTaskCard(task: GrowthTaskRow, onClaim: () -> Unit, onRun: () -
             // 这些任务大多没有可查询进度，恒显示 0% 反而误导。
             if (task.hasProgress && !task.claimed) {
                 Spacer(Modifier.height(PcTokens.SpaceS))
-                LinearProgressIndicator(progress = task.ratio, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(
+                    progress = { task.ratio },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
             Spacer(Modifier.height(PcTokens.SpaceS))
             when {
                 task.claimed -> Text(
                     "已领取",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 task.claimable -> Button(onClick = onClaim, modifier = Modifier.fillMaxWidth()) { Text("领取奖励") }
-                else -> TextButton(text = "执行任务", onClick = onRun, modifier = Modifier.fillMaxWidth())
+                // Material3 的 TextButton 没有 `text =` 参数（Miuix 有），
+                // 文案作为尾随 lambda 传入。
+                else -> TextButton(onClick = onRun, modifier = Modifier.fillMaxWidth()) { Text("执行任务") }
             }
         }
     }

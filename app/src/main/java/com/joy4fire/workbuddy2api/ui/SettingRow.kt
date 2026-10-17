@@ -1,25 +1,20 @@
 package com.joy4fire.workbuddy2api.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
 
 /**
  * 设置项：点击弹窗编辑。
@@ -34,6 +29,11 @@ import top.yukonga.miuix.kmp.window.WindowDialog
  *
  *   现在首屏只渲染一行只读文本 + 一个箭头，TextField 仅在用户点击后
  *   于弹窗内创建，代价从"每次进页面"变成"每次编辑一项"，且只建 1 个。
+ *
+ *   【M3 移植补充】这个「延迟创建 TextField」的结论在 Material 3 下依然成立 ——
+ *   M3 的 OutlinedTextField 同样带标签位移动画与边框颜色动画（数量级相当），
+ *   所以不能因为换了组件库就把 TextField 放回首屏。原判断与具体 UI 库无关，
+ *   它针对的是「Compose 组合期的动画实例数量」这件事本身。
  */
 @Composable
 fun SettingRow(
@@ -77,32 +77,41 @@ private fun SettingEditDialog(
     // 用状态持有输入值：弹窗关闭即随组合销毁，不需要额外的清理。
     var text by remember { mutableStateOf(initial) }
 
-    WindowDialog(
-        show = true,
-        title = label,
+    // 【M3 移植】Miuix 的 WindowDialog(show, title, content) 换成 M3 的 AlertDialog。
+    //   两个语义差异，已在下面各自处理：
+    //   ① AlertDialog 没有 show 参数，靠外层 if (editing) 控制渲染 —— 调用点本来
+    //      就在 SettingRow 的 if (editing) 里，所以不需要额外包一层。
+    //   ② AlertDialog 的按钮是具名的 confirmButton/dismissButton 而不是自由布局。
+    //      原实现把「取消 + 保存」放在 content 的 Row 里并手写 weight(1f) 平分宽度，
+    //      移植后交给具名插槽：M3 规格本身就是按钮右对齐、由组件负责间距，
+    //      比手写等分更贴规范，也少一处布局代码。
+    AlertDialog(
         onDismissRequest = onDismiss,
-        content = {
+        title = { Text(label) },
+        text = {
             Column(Modifier.fillMaxWidth()) {
-                TextField(
+                OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = label,
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text(label) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
                 if (hint != null) {
                     Spacer(Modifier.height(PcTokens.SpaceS))
                     Text(
-                        hint,
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        text = hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(Modifier.height(PcTokens.SpaceM))
-                Row(horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS)) {
-                    TextButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f))
-                    Button(onClick = { onConfirm(text) }, modifier = Modifier.weight(1f)) { Text("保存") }
-                }
             }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
 }

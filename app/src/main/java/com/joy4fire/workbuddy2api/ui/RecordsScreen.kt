@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
@@ -17,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.joy4fire.workbuddy2api.AccountRegion
@@ -24,12 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.joy4fire.workbuddy2api.FormatKit
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.TabRow
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.joy4fire.workbuddy2api.m3.AppCard
+import com.joy4fire.workbuddy2api.m3.SectionTitle
 
 /**
  * 记录页 —— 对应原界面 recordsPage()。
@@ -101,16 +102,24 @@ fun RecordsScreen(context: Context, app: AppState) {
                 PcInfoRow("消耗积分", "%.2f".format(totalCredits))
                 PcInfoRow("消耗 Tokens", FormatKit.tokens(totalTokens))
                 Spacer(Modifier.height(PcTokens.SpaceM))
-                TabRow(
-                    tabs = listOf("全部", "成功", "失败"),
-                    selectedTabIndex = statusFilter,
-                    onTabSelected = { statusFilter = it }
-                )
+                // 【M3 移植】Miuix 的 TabRow 是「tabs 列表 + selectedTabIndex + onTabSelected」，
+                //   Material3 的 TabRow 则是内容槽（尾随 lambda 里自己放 Tab）。
+                //   语义等价：选中状态与点击回调逐项对应，选中索引仍由 statusFilter 驱动。
+                val statusTabs = listOf("全部", "成功", "失败")
+                TabRow(selectedTabIndex = statusFilter) {
+                    statusTabs.forEachIndexed { index, label ->
+                        Tab(
+                            selected = statusFilter == index,
+                            onClick = { statusFilter = index },
+                            text = { Text(label) }
+                        )
+                    }
+                }
                 Spacer(Modifier.height(PcTokens.SpaceS))
                 Text(
                     "逐条记录模型、应用、扣费账号、Tokens 与积分消耗。",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 // 刷新是记录页最常用的动作（数据随时间增长），与清空并列成组。
                 Spacer(Modifier.height(PcTokens.SpaceM))
@@ -129,13 +138,13 @@ fun RecordsScreen(context: Context, app: AppState) {
                     Text(
                         if (records.length() == 0) "暂无调用记录。使用任一应用 Key 调用本地网关后，记录会显示在这里。"
                         else "当前筛选条件下没有记录。",
-                        style = MiuixTheme.textStyles.body2,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         } else {
-            item { SmallTitle(text = "最近 ${filtered.size} 条") }
+            item { SectionTitle(text = "最近 ${filtered.size} 条") }
             items(filtered.size) { index ->
                 val item = filtered[index]
                 UsageRecordCard(
@@ -216,27 +225,30 @@ private fun UsageRecordCard(
         }.getOrDefault("")
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PcTokens.PageGutter),
-        insideMargin = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)
+    // 【M3 移植】Miuix 的 Card 换成 m3 包的 AppCard（封装了 ElevatedCard + 12dp 圆角）。
+    //   AppCard 与原 PcCard 一样自带页面左右边距，故不再在调用点叠加 PcTokens.PageGutter，
+    //   否则会出现「卡片边距 + 调用点边距」的双重缩进（与 PcComponents 里记录的同款踩坑一致）。
+    //   insideMargin 参数在 M3 的 Card 中不存在，改为 AppCard 的 contentPadding。
+    AppCard(
+        contentPadding = PaddingValues(horizontal = PcTokens.SpaceL, vertical = PcTokens.SpaceM)
     ) {
         Column {
             // 首行：状态 + 时间 + 序号
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     item.optString("status", "ok"),
-                    style = MiuixTheme.textStyles.body2,
-                    color = if (ok) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     "$time · #$id",
-                    style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.height(PcTokens.SpaceS))
-            Text(item.optString("model", "auto"), style = MiuixTheme.textStyles.main)
+            Text(item.optString("model", "auto"), style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(PcTokens.SpaceS))
 
             // 核心信息：谁在扣分（账号）
@@ -254,8 +266,8 @@ private fun UsageRecordCard(
 
             if (item.optString("error").isNotBlank()) {
                 Spacer(Modifier.height(PcTokens.SpaceS))
-                Text(item.optString("error"), style = MiuixTheme.textStyles.body2,
-                    color = MiuixTheme.colorScheme.error)
+                Text(item.optString("error"), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
             }
             Spacer(Modifier.height(PcTokens.SpaceM))
             PcActionGrid(

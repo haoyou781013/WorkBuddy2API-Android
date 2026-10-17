@@ -7,13 +7,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import com.joy4fire.workbuddy2api.m3.SectionTitle
 
 /**
  * 设置页 —— 分组入口式布局（性能优先版）。
@@ -105,7 +106,8 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
             }
         }
 
-        item { SmallTitle(text = "关于") }
+        // 【M3 移植】原 Miuix 的 SmallTitle 换成 m3 包的 SectionTitle。
+        item { SectionTitle(text = "关于") }
         item {
             PcCard {
                 PcInfoRow("版本", installedVersion(context))
@@ -129,13 +131,25 @@ private fun SwitchRow(
     onChange: (Boolean) -> Unit
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = PcTokens.SpaceS / 2)) {
-        Text(title, style = MiuixTheme.textStyles.main)
+        // 【M3 移植】文本样式全部改取 Material 3 的 typography token：
+        //   原 MiuixTheme.textStyles.main → bodyLarge；
+        //   原 MiuixTheme.textStyles.body2 → bodySmall；
+        //   原 MiuixTheme.colorScheme.onSurfaceVariantSummary → colorScheme.onSurfaceVariant。
+        Text(title, style = MaterialTheme.typography.bodyLarge)
         Text(
             summary,
-            style = MiuixTheme.textStyles.body2,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Switch(checked = checked, onCheckedChange = onChange)
+        // 【M3 移植】Miuix 的 Switch 自带左侧留白与固定轨道配色；
+        //   Material 3 的 Switch 轨道默认色对「已开启」状态区分度较低，
+        //   这里显式传 SwitchDefaults.colors()，行为与默认一致，
+        //   只是为了把「配色来自 M3 默认规格」这件事写明确。
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors()
+        )
     }
 }
 

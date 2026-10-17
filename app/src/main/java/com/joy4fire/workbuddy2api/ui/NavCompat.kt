@@ -9,7 +9,17 @@ import androidx.navigationevent.NavigationEventDispatcherOwner
 import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
 
 /**
- * Miuix 弹层依赖修复（删掉这个文件会让所有对话框/下拉菜单崩溃）。
+ * 弹层 NavigationEventDispatcherOwner 补丁（删掉这个文件会让所有对话框崩溃）。
+ *
+ * 【M3 移植后的状态】本补丁**继续保留**，原因如下：
+ *   根因是「Compose 的 Dialog 是独立 window，其 View 树不继承 Activity 那棵，
+ *   于是按 R.id.view_tree_navigation_event_dispatcher_owner 查不到 owner」。
+ *   这是 Compose Dialog 的机制问题，**与上层用的是哪个组件库无关** ——
+ *   Material 3 的 AlertDialog 最终也走 AndroidDialog + 独立 window，
+ *   组件内部同样会注册 NavigationBackHandler（支持返回键关闭）。
+ *   故不能因为换掉 Miuix 就删除本文件。
+ *
+ * 原崩溃栈（Miuix 时期观测到，M3 下路径相同）:
  *
  * 崩溃栈：
  *   java.lang.IllegalStateException: No NavigationEventDispatcher was provided
