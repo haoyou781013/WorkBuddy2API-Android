@@ -896,7 +896,12 @@ class NativeStore private constructor(context: Context) : SQLiteOpenHelper(
             "prompt_mode" to "custom",
             "prompt_text" to "",
             "sanitize_fingerprints" to "1",
-            "use_degraded_prompt" to "false"
+            "use_degraded_prompt" to "false",
+            // ---- 本地 API 监听范围 ----
+            // "0"（默认）= 只绑 127.0.0.1，仅本机可调用；"1" = 绑 0.0.0.0，同网段设备可访问。
+            // 默认关闭是刻意选择：本机之外没有合法调用方（客户端就是手机上的其他 App），
+            // 开放局域网只会把攻击面从本机进程扩大到整个 WiFi。
+            "lanAccess" to "0"
         )
         /**
          * 记录内容字段的入库上限。取值理由：

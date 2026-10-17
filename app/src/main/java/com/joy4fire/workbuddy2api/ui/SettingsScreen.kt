@@ -43,6 +43,13 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                     checked = app.settings.optString("keepalive_enabled", "1") in setOf("1", "true"),
                     onChange = { app.saveSetting("keepalive_enabled", if (it) "1" else "0") }
                 )
+                SwitchRow(
+                    title = "允许局域网访问",
+                    summary = "默认只监听 127.0.0.1（仅本机可调用）。开启后同一 WiFi 下的设备也能访问，"
+                        + "请确认 API Key 未泄漏再打开",
+                    checked = app.settings.optString("lanAccess", "0") in setOf("1", "true"),
+                    onChange = { app.saveSetting("lanAccess", if (it) "1" else "0") }
+                )
                 PcRow(
                     title = "提示词注入",
                     summary = "接管 system / 指纹清洗 / 降级开关",
@@ -102,7 +109,12 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
         item {
             PcCard {
                 PcInfoRow("版本", installedVersion(context))
-                PcInfoRow("本地端口", "8788")
+                PcInfoRow(
+                    "监听地址",
+                    if (app.settings.optString("lanAccess", "0") in setOf("1", "true"))
+                        "0.0.0.0:8788（本机与局域网）"
+                    else "127.0.0.1:8788（仅本机）"
+                )
             }
         }
     }

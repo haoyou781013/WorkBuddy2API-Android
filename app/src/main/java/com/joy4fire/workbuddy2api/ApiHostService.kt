@@ -140,9 +140,12 @@ class ApiHostService : Service() {
     /**
      * 获取部分唤醒锁（不计数模式，服务停止时统一释放）。
      *
-     * 带 10 分钟超时而不是无限期持有：长时间死锁会被 ROM 的省电策略判为异常耗电目标，
-     * 反而优先清理，与保活初衷相反；超时后由 60 秒一次的 maintenance tick 自动续期，
-     * 既保持"始终持锁"，又避免留下无人回收的永久锁。
+     * 带 30 分钟超时而不是无限期持有：长时间死锁会被 ROM 的省电策略判为异常耗电目标，
+     * 反而优先清理，与保活初衷相反。
+     *
+     * 续期来源是**看门狗（AlarmManager）而不是 maintenance tick** —— 后者是
+     * ScheduledExecutor，在 Doze 下没有 CPU 时间片、根本不会调度，靠它续期等于不续。
+     * 见 WAKELOCK_TIMEOUT_MS 的注释。
      */
     private fun acquireWakeLock() {
         // 已持有且未过期就跳过；带超时的锁过期后 isHeld 会变回 false，下次 tick 自动续上。
@@ -181,12 +184,36 @@ class ApiHostService : Service() {
         return START_STICKY
     }
 
+    /**
+     * 决定监听地址：默认**只绑回环**（127.0.0.1）。
+     *
+     * 为什么要改掉原来的 0.0.0.0：
+     *   绑 0.0.0.0 会让同一 WiFi 下的任何设备都能访问这个 API。虽然每个请求都要过
+     *   API key 校验，但把攻击面从「本机进程」扩大到「同网段所有人」并不划算——
+     *   本机之外没有任何合法调用方（客户端就是手机上的其他 App）。局域网嗅探、
+     *   key 爆破、误配转发都会因此变成一个真实风险，而收益为零。
+     *
+     * 需要跨设备调用时，在设置里显式打开「允许局域网访问」（settings.lanAccess=true）。
+     * 这是一个 opt-in，默认关闭。
+     */
+    private fun resolveBindHost(): String {
+        // 设置值统一以字符串存储（NativeStore 的 settings 表 value 列是 TEXT），
+        // 且 UI 侧写的是 "1"/"0"，所以这里按字符串比对而不是 optBoolean。
+        val allowLan = runCatching {
+            NativeCore.settings(this).optString(SETTING_LAN_ACCESS, "0") in LAN_ON
+        }.getOrDefault(false)
+        return if (allowLan) LAN_ANY else LOOPBACK
+    }
+
     private fun serve() {
         try {
-            val socket = ServerSocket(PORT, 32, InetAddress.getByName("0.0.0.0"))
+            val bindHost = resolveBindHost()
+            val socket = ServerSocket(PORT, 32, InetAddress.getByName(bindHost))
             server = socket
             running = true
-            notifyState("原生 API 运行中 · 端口 $PORT（本机与局域网）")
+            val scope = if (bindHost == LOOPBACK) "仅本机" else "本机与局域网"
+            notifyState("原生 API 运行中 · $bindHost:$PORT（$scope）")
+            Log.i(TAG, "listening on $bindHost:$PORT (scope=$scope)")
             while (!socket.isClosed) {
                 val client = socket.accept()
                 // 线程池/队列已满时必须单独接住：否则拒绝异常会冒泡到外层 catch，
@@ -926,14 +953,41 @@ class ApiHostService : Service() {
 
     companion object {
         const val PORT = 8788
+        /** 默认监听地址：只绑回环，本机之外的设备无法连接。 */
+        private const val LOOPBACK = "127.0.0.1"
+        /** 开启「允许局域网访问」后的监听地址。 */
+        private const val LAN_ANY = "0.0.0.0"
+        /** 设置键：是否允许局域网访问（默认关闭，需用户在设置里显式打开）。 */
+        private const val SETTING_LAN_ACCESS = "lanAccess"
+        /** 视为「已开启」的字符串取值。 */
+        private val LAN_ON = setOf("1", "true")
         const val ACTION_STOP = "com.joy4fire.workbuddy2api.STOP"
         const val ACTION_STATE = "com.joy4fire.workbuddy2api.STATE"
         /** 看门狗闹钟动作：被它唤醒时只需确认前台服务与唤醒锁仍在。 */
         const val ACTION_WATCHDOG = "com.joy4fire.workbuddy2api.WATCHDOG"
-        /** 看门狗轮询间隔 15 分钟：再密会被 ColorOS 判定异常唤醒，反而拦截得更狠。 */
-        private const val WATCHDOG_INTERVAL_MS = 15 * 60_000L
-        /** 唤醒锁超时 10 分钟：短于 maintenance 续期周期上限，过期后由 tick 自动续上。 */
-        private const val WAKELOCK_TIMEOUT_MS = 10 * 60_000L
+        /**
+         * 看门狗轮询间隔 9 分钟。
+         *
+         * 为什么是 9 分钟而不是原来的 15 分钟：
+         *   Doze 对 setExactAndAllowWhileIdle 的限流下限就是 9 分钟——比这更密会被系统
+         *   直接降级为普通闹钟（Doze 下可能延迟数小时），比这更疏则会拉长「服务已死但
+         *   还没被拉起」的空窗。9 分钟正好卡在系统允许的最密值上，是兜底延迟的理论下界。
+         */
+        private const val WATCHDOG_INTERVAL_MS = 9 * 60_000L
+
+        /**
+         * 唤醒锁超时 30 分钟，**必须大于 WATCHDOG_INTERVAL_MS**。
+         *
+         * 原实现是 10 分钟，注释假设「超时后由 60 秒一次的 maintenance tick 自动续期」，
+         * 但那恰恰在最需要续期的场景下不成立：Doze 期间 ScheduledExecutor 没有 CPU 时间片，
+         * tick 根本不调度，锁一旦过期就没有任何人来续——进程随即失去 Cached App Freezer
+         * 豁免资格并被冻结，表现为「息屏一段时间后 127.0.0.1 调不通」。
+         *
+         * 改为 30 分钟（= 看门狗间隔的 3 倍多）后，即使某次续期被系统延迟，锁的剩余有效期
+         * 仍然覆盖到下一次看门狗唤醒；而看门狗走 AlarmManager，是唯一能在 Doze 下唤醒 CPU
+         * 的机制，所以它才是真正可靠的续期来源。
+         */
+        private const val WAKELOCK_TIMEOUT_MS = 30 * 60_000L
         /** 空闲空间超过此值才值得做 VACUUM：小于 2MB 时重写整库的代价超过回收收益。 */
         private const val VACUUM_MIN_FREE_BYTES = 2L * 1024 * 1024
         /** cache 类目录超过此值才清理 WebView 缓存，避免每天无谓地扫描+清理。 */
