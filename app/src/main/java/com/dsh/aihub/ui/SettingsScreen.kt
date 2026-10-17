@@ -36,8 +36,20 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
         contentPadding = PaddingValues(top = PcTokens.SpaceM, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(PcTokens.CardGap)
     ) {
+        // ── 分组原则：按「用户此刻想做什么」分，不按技术模块分 ──
+        //
+        // 旧版把 9 个二级页塞进「常用 / 自动化 / 数据与诊断」三组，
+        // 问题在「数据与诊断」混装了四件不同的事：
+        //   看用量（高频，关心数字）
+        //   看记录（高频，关心明细）
+        //   清空间（低频，出问题才来）
+        //   抓包取证（极低频，排查上游不通）
+        // 用户想清空间时得先在一堆用量入口里找，这就是分类不清的代价。
+
         item {
-            PcCard(title = "常用") {
+            // 服务层面的总开关。放在最前：用户进设置页，
+            // 第一件事通常是确认服务是否按预期运行。
+            PcCard(title = "运行状态") {
                 SwitchRow(
                     title = "启用账号保活",
                     summary = "定时刷新令牌与额度，保持账号可用",
@@ -51,46 +63,27 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                     checked = app.settings.optString("lanAccess", "0") in setOf("1", "true"),
                     onChange = { app.saveSetting("lanAccess", if (it) "1" else "0") }
                 )
-                PcRow(
-                    title = "提示词注入",
-                    summary = "接管 system / 指纹清洗 / 降级开关",
-                    value = "›",
-                    onClick = { onOpenSub(SubPage.PROMPT) }
-                )
-            }
-        }
-
-        item {
-            PcCard(title = "自动化") {
-                PcRow(
-                    title = "定时参数",
-                    summary = "签到时段 / 额度刷新 / 模型缓存 / 记录保留",
-                    value = "›",
-                    onClick = { onOpenSub(SubPage.SCHEDULE) }
-                )
+                // 保活与取证都回答同一个问题：「服务为什么不通」。
+                // 前者查系统限制，后者查上游请求，排查时是连续动作。
                 PcRow(
                     title = "后台保活",
                     summary = "按厂商逐步放开限制，并检查漏项",
                     value = "›",
                     onClick = { onOpenSub(SubPage.KEEPALIVE) }
                 )
+                PcRow(
+                    title = "出网取证",
+                    summary = "与官方 CLI 逐字节比对的请求记录",
+                    value = "›",
+                    onClick = { onOpenSub(SubPage.INSPECTOR) }
+                )
             }
         }
 
         item {
-            PcCard(title = "数据与诊断") {
-                PcRow(
-                    title = "调用记录",
-                    summary = "模型、扣费账号、Tokens 与积分消耗",
-                    value = "›",
-                    onClick = { onOpenSub(SubPage.RECORDS) }
-                )
-                PcRow(
-                    title = "存储占用",
-                    summary = "数据库体积、目录占用与清理",
-                    value = "›",
-                    onClick = { onOpenSub(SubPage.STORAGE) }
-                )
+            // 同一数据源的两个视角：聚合看趋势，明细看单次。
+            // 放同一组是因为用户看用量时经常在两者间来回切。
+            PcCard(title = "用量与记录") {
                 PcRow(
                     title = "用量统计",
                     summary = "请求、Tokens 与额度概览",
@@ -98,10 +91,44 @@ fun SettingsScreen(context: Context, app: AppState, onOpenSub: (SubPage) -> Unit
                     onClick = { onOpenSub(SubPage.USAGE) }
                 )
                 PcRow(
-                    title = "出网取证",
-                    summary = "与官方 CLI 逐字节比对的请求记录",
+                    title = "调用记录",
+                    summary = "模型、扣费账号、Tokens 与积分消耗",
                     value = "›",
-                    onClick = { onOpenSub(SubPage.INSPECTOR) }
+                    onClick = { onOpenSub(SubPage.RECORDS) }
+                )
+            }
+        }
+
+        item {
+            // 这一组改的是「发给上游的请求长什么样」，与用量无关，
+            // 所以从原来的「常用 / 自动化」里抽出来单独成组。
+            PcCard(title = "行为配置") {
+                PcRow(
+                    title = "提示词注入",
+                    summary = "接管 system / 指纹清洗 / 降级开关",
+                    value = "›",
+                    onClick = { onOpenSub(SubPage.PROMPT) }
+                )
+                // 定时参数决定签到与刷新在什么时间发起，同样是对上游行为的设定
+                PcRow(
+                    title = "定时参数",
+                    summary = "签到时段 / 额度刷新 / 模型缓存 / 记录保留",
+                    value = "›",
+                    onClick = { onOpenSub(SubPage.SCHEDULE) }
+                )
+            }
+        }
+
+        item {
+            // 维护类：低频、破坏性、出问题才来。
+            // 单独成组而不是塞进「用量与记录」——那会让"清理"混在"查看"里，
+            // 增加误触风险。
+            PcCard(title = "维护") {
+                PcRow(
+                    title = "存储占用",
+                    summary = "数据库体积、目录占用与清理",
+                    value = "›",
+                    onClick = { onOpenSub(SubPage.STORAGE) }
                 )
             }
         }
