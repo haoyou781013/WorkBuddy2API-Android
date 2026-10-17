@@ -1,5 +1,7 @@
 package com.dsh.aihub.ui
 
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +52,7 @@ fun QoderScreen() {
     var claiming by remember { mutableStateOf(false) }
     var claimResult by remember { mutableStateOf<String?>(null) }
     var reportText by remember { mutableStateOf<String?>(null) }
+    var querying by remember { mutableStateOf(false) }
     var ok by remember { mutableStateOf(false) }
 
     Column(
@@ -63,6 +66,47 @@ fun QoderScreen() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(PcTokens.SpaceM))
+
+        // ---- PAT 获取引导 ----
+        PcCard(title = "还没 PAT？三步拿到") {
+            GuideStep("1", "注册国内版", "qoder.com.cn（国际版账号不能领每日积分）")
+            GuideStep("2", "登录后点头像", "进入 设置 → 个人访问令牌")
+            GuideStep("3", "创建并复制", "以 pt- 开头，只显示一次")
+            Spacer(Modifier.height(PcTokens.SpaceS))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(PcTokens.SpaceS),
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse("https://qoder.com.cn/"),
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("打开官网") }
+
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse("https://qoder.com.cn/"),
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("令牌页面") }
+            }
+        }
         Spacer(Modifier.height(PcTokens.SpaceM))
 
         // 输入框 + 独立的「粘贴」按钮。
@@ -145,13 +189,29 @@ fun QoderScreen() {
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (claiming) "领取中…" else "领取今日积分") }
 
+        Spacer(Modifier.height(PcTokens.SpaceS))
+        OutlinedButton(
+            onClick = {
+                querying = true
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) { QoderClaim(pat).queryBalance() }
+                    claimResult = r.message
+                    querying = false
+                }
+            },
+            enabled = !querying && pat.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (querying) "查询中…" else "查询余额") }
+
         claimResult?.let {
             Spacer(Modifier.height(PcTokens.SpaceS))
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         report?.let { lines ->
@@ -192,6 +252,30 @@ fun QoderScreen() {
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("复制完整报告") }
             }
+        }
+    }
+}
+
+/** 引导步骤的一行：序号圆圈 + 标题 + 说明。 */
+@Composable
+private fun GuideStep(no: String, title: String, detail: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            no,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.width(20.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

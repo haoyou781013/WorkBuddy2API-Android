@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -128,20 +129,17 @@ fun AppShell(context: Context, app: AppState) {
                     title = { Text(title) },
                     navigationIcon = {
                         if (sub != SubPage.NONE) {
-                            // 显式给 tint。
+                            // 用文字「返回」而不是图标。
                             //
-                            // M3Icons 里路径 fill 用的是 Color.Black 占位，靠 Material3 Icon
-                            // 默认的 LocalContentColor 重着色。容器没设 contentColor 时图标
-                            // 就保持纯黑 —— 顶栏背景若是深色，看起来就是「没有返回键」，
-                            // 但点击区域依然有效，正是用户看到的现象。
+                            // 之前用 M3Icons.Back 图标，用户反馈完全看不见（先怀疑纯黑
+                            // tint，加了显式 tint 仍无效）。图标路径本身没问题 —— 和其他
+                            // 能正常显示的图标结构一致 —— 所以问题很可能在
+                            // CenterAlignedTopAppBar 对 navigationIcon 槽位的测量上。
                             //
-                            // 指定 onSurface 消除对 LocalContentColor 的依赖。
-                            IconButton(onClick = { sub = SubPage.NONE }) {
-                                Icon(
-                                    imageVector = M3Icons.Back,
-                                    contentDescription = "返回",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                )
+                            // 文字方案绕开整个图标渲染链路，且不依赖任何 vector drawable，
+                            // 视觉上也更明确。
+                            TextButton(onClick = { sub = SubPage.NONE }) {
+                                Text("返回", style = MaterialTheme.typography.bodyLarge)
                             }
                         }
                     },

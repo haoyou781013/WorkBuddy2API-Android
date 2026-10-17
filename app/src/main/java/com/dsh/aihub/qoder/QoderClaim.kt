@@ -242,5 +242,77 @@ class QoderClaim(private val personalToken: String) {
         }
     }
 
+    /**
+     * 查询当前 Credits 余额。
+     *
+     * 社区实现里没有现成的余额接口，所以这里**同时试几个候选路径**，
+     * 哪个能返回数值就用哪个。这不是猜谜 —— 每个候选都来自 Qoder
+     * 其他公开接口的命名习惯，试完把命中的记下来即可。
+     */
+    fun queryBalance(): Result {
+        val attempts = ArrayList<String>()
+        for (path in BALANCE_PATHS) {
+            val r = runCatching {
+                ensureSession()
+                request(path, "GET")
+            }
+            r.onSuccess { text ->
+                lastBalanceRaw = text
+                val n = extractBalance(text)
+                if (n != null) return Result(true, "余额 $n Credits")
+                attempts += "  ${path.substringBefore('?')} → 未找到余额字段"
+            }.onFailure { attempts += "  ${path.substringBefore('?')} → ${it.message?.take(80)}" }
+        }
+        return Result(false, "余额接口未确认：\n" + attempts.joinToString("\n"))
+    }
+
+    /** 余额原始响应，供诊断。 */
+    var lastBalanceRaw: String? = null
+        private set
+
+    /**
+     * 从各种可能的响应结构里抠出余额数字。
+     *
+     * 上游字段名未确认，所以按「名字里带 credit/balance/remain/available
+     * 且值是数字」递归找第一个命中。比硬编码某个字段名稳。
+     */
+    private fun extractBalance(text: String): Int? {
+        val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        var found: Int? = null
+
+        fun walk(o: Any?) {
+            if (found != null) return
+            when (o) {
+                is JSONObject -> {
+                    for (key in o.keys()) {
+                        val v = o.opt(key)
+                        val k = key.lowercase()
+                        if ((k.contains("credit") || k.contains("balance") ||
+                                k.contains("remain") || k.contains("available")) &&
+                            v is Number
+                        ) {
+                            found = v.toInt(); return
+                        }
+                        walk(v)
+                    }
+                }
+                is org.json.JSONArray -> for (i in 0 until o.length()) walk(o.opt(i))
+            }
+        }
+        walk(json)
+        return found
+    }
+
     private fun host(): String = baseActive.removePrefix("https://").substringBefore('/')
+
+    private companion object {
+        /** 余额候选路径。命中后可以只留一个，这里先全试。 */
+        val BALANCE_PATHS = listOf(
+            "/sash/api/v1/me/credits",
+            "/sash/api/v1/me/quota",
+            "/sash/api/v1/me/usage",
+            "/api/v1/me/credits",
+            "/api/v1/user/status",
+        )
+    }
 }
