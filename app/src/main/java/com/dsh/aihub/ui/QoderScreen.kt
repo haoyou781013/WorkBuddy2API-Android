@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.dsh.aihub.qoder.QoderClaim
 import com.dsh.aihub.qoder.QoderVerify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,6 +43,8 @@ fun QoderScreen() {
     var pat by remember { mutableStateOf("") }
     var running by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<List<String>?>(null) }
+    var claiming by remember { mutableStateOf(false) }
+    var claimResult by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf(false) }
 
     Column(
@@ -79,6 +82,29 @@ fun QoderScreen() {
             enabled = !running && pat.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (running) "验证中…" else "开始验证") }
+
+        Spacer(Modifier.height(PcTokens.SpaceM))
+        Button(
+            onClick = {
+                claiming = true
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) { QoderClaim(pat).claimAll() }
+                    claimResult = r.message
+                    claiming = false
+                }
+            },
+            enabled = !claiming && pat.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (claiming) "领取中…" else "领取今日积分") }
+
+        claimResult?.let {
+            Spacer(Modifier.height(PcTokens.SpaceS))
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         report?.let { lines ->
             Spacer(Modifier.height(PcTokens.SpaceL))
